@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>New Entry — Budget Pipeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap');
+  :root {
+    --bg:#f5f4f0;--surface:#fff;--border:#e2e0d8;--border-strong:#c8c5b8;
+    --text:#1a1917;--text-muted:#6b6860;--text-faint:#a8a59e;
+    --green:#1a6b3c;--green-bg:#edf7f1;--green-border:#86c9a3;
+    --red:#b83232;--red-bg:#fef2f2;
+    --amber:#a05c00;--amber-bg:#fff8ed;
+    --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 16px;}
+  .header-title{font-size:18px;font-weight:500;}
+  .header-sub{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-top:2px;}
+  .badge-manual{display:inline-block;font-size:10px;background:var(--amber-bg);color:var(--amber);padding:2px 7px;border-radius:4px;font-family:var(--mono);font-weight:500;margin-top:4px;}
+  .view{display:none;padding:16px;}
+  .view.active{display:block;}
+  .field-group{margin-bottom:14px;}
+  .field-label{font-size:12px;color:var(--text-muted);margin-bottom:5px;display:block;font-family:var(--mono);}
+  .required{color:var(--red);}
+  input,select,textarea{
+    width:100%;background:var(--surface);color:var(--text);
+    border:1px solid var(--border);border-radius:8px;
+    font-size:14px;padding:10px 12px;font-family:var(--sans);
+    outline:none;transition:border-color 0.15s;
+  }
+  input:focus,select:focus,textarea:focus{border-color:var(--border-strong);}
+  select{appearance:none;-webkit-appearance:none;cursor:pointer;}
+  textarea{resize:none;height:70px;font-family:var(--sans);}
+  .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+  .btn{width:100%;padding:13px;font-size:14px;font-family:var(--sans);font-weight:500;border:1px solid var(--border);border-radius:10px;background:transparent;color:var(--text);cursor:pointer;transition:background 0.15s;}
+  .btn:hover{background:var(--bg);}
+  .btn-primary{background:var(--text);color:var(--surface);border-color:var(--text);}
+  .btn-primary:hover{opacity:0.85;background:var(--text);}
+  .btn-success{background:var(--green-bg);color:var(--green);border-color:var(--green-border);}
+  .btn-success:hover{opacity:0.85;}
+  .btn-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px;}
+  .err{display:none;font-size:12px;color:var(--red);background:var(--red-bg);border-radius:8px;padding:9px 12px;margin-bottom:12px;font-family:var(--mono);}
+  .review-card{background:var(--bg);border-radius:10px;padding:4px 14px;margin-bottom:14px;}
+  .review-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);}
+  .review-row:last-child{border-bottom:none;}
+  .review-label{font-size:12px;color:var(--text-muted);font-family:var(--mono);}
+  .review-val{font-size:13px;font-weight:500;text-align:right;max-width:190px;word-break:break-word;}
+  .notice{font-size:12px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--border-strong);border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:14px;font-family:var(--mono);line-height:1.6;}
+  .done-wrap{padding:60px 20px;text-align:center;}
+  .done-icon{font-size:48px;margin-bottom:14px;}
+  .done-title{font-size:20px;font-weight:500;margin-bottom:8px;}
+  .done-sub{font-size:12px;color:var(--text-muted);font-family:var(--mono);margin-bottom:20px;line-height:1.7;}
+  .btn-sm{padding:9px 20px;font-size:13px;width:auto;display:inline-block;}
+</style>
+</head>
+<body>
+<!-- Populated from /api/config on load — see buildNoteDatalist() in the script. -->
+<datalist id="note-suggestions"></datalist>
+<header>
+  <a href="/" style="display:inline-block;font-size:11px;color:var(--text-muted);text-decoration:none;font-family:var(--mono);padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);margin-bottom:8px;">← Home</a>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+    <div>
+      <div class="header-title">New entry</div>
+      <div class="header-sub">pipeline v4 · entry_form.html</div>
+    </div>
+    <span class="badge-manual">manual</span>
+  </div>
+</header>
+
+<div id="form-view" class="view active">
+  <div class="field-group">
+    <label class="field-label" for="f-date">Date <span class="required">*</span></label>
+    <input type="date" id="f-date">
+  </div>
+  <div class="field-group">
+    <label class="field-label" for="f-desc">Description <span class="required">*</span></label>
+    <input type="text" id="f-desc" placeholder="What was this for?">
+  </div>
+  <div class="grid2">
+    <div class="field-group">
+      <label class="field-label" for="f-amount">Amount (THB) <span class="required">*</span></label>
+      <input type="number" id="f-amount" placeholder="0" min="0" step="1">
+    </div>
+    <div class="field-group">
+      <label class="field-label" for="f-note">Note</label>
+      <input type="text" id="f-note" list="note-suggestions" placeholder="type or pick a card">
+    </div>
+  </div>
+  <div class="field-group">
+    <label class="field-label" for="f-cat">Category</label>
+    <select id="f-cat">
+      <option value="">— leave blank —</option>
+      <optgroup label="Spending">
+        <option>Food</option><option>Drinks and Snacks</option><option>Transport</option>
+        <option>Health / Necessaries</option><option>Shopping</option><option>Groceries</option>
+        <option>Utilities and Subs</option><option>Sports</option>
+        <option>Social Expenses / Donation</option><option>With Roong</option>
+        <option>To Mom</option><option>Other</option>
+      </optgroup>
+      <optgroup label="Income / Savings">
+        <option>Salary</option><option>Bonus</option><option>Reimbursement</option>
+        <option>Payback from someone</option><option>Provident Fund</option>
+        <option>Mutual Fund</option><option>Coop Account</option>
+        <option>Saving for EOY Tax Deduction</option><option>Interest payment</option>
+      </optgroup>
+    </select>
+  </div>
+  <div class="err" id="form-err"></div>
+  <button class="btn btn-primary" onclick="goReview()">Review entry →</button>
+</div>
+
+<div id="review-view" class="view">
+  <div class="review-card">
+    <div class="review-row"><span class="review-label">Date</span><span class="review-val" id="r-date">—</span></div>
+    <div class="review-row"><span class="review-label">Description</span><span class="review-val" id="r-desc">—</span></div>
+    <div class="review-row"><span class="review-label">Amount</span><span class="review-val" id="r-amount">—</span></div>
+    <div class="review-row"><span class="review-label">Category</span><span class="review-val" id="r-cat">—</span></div>
+    <div class="review-row"><span class="review-label">Note</span><span class="review-val" id="r-note">—</span></div>
+    <div class="review-row"><span class="review-label">Source</span><span class="review-val" style="color:var(--amber);">manual</span></div>
+  </div>
+  <div class="notice">No slip attached. Row will be marked <strong>source: manual</strong> in database.csv.</div>
+  <div class="err" id="review-err"></div>
+  <div class="btn-grid">
+    <button class="btn" id="btn-back" onclick="goBack()">← Edit</button>
+    <button class="btn btn-success" id="btn-commit" onclick="doCommit()">✓ Commit</button>
+  </div>
+</div>
+
+<div id="done-view" class="view">
+  <div class="done-wrap">
+    <div class="done-icon">✓</div>
+    <div class="done-title">Row committed</div>
+    <div class="done-sub" id="done-summary">—</div>
+    <button class="btn btn-primary btn-sm" onclick="doReset()">+ Add another</button>
+  </div>
+</div>
+
+<script src="data-source.js"></script>
+<script>
+function v(id){return document.getElementById(id).value.trim();}
+function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+// Pull card list + extra suggestions via DataSource so this stays in sync
+// with slip_extractor.CARD_BY_LAST4 (local mode) or config.json (GitHub mode).
+// Fire-and-forget — if it fails the input still works as plain text.
+async function loadNoteConfig(){
+  try{
+    const cfg=await DataSource.loadConfig();
+    const dl=document.getElementById('note-suggestions');
+    const cards=(cfg.cards||[]).map(c=>
+      `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (xx${escapeHtml(c.last4)})</option>`);
+    const extras=(cfg.extra_note_suggestions||[]).map(v=>
+      `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`);
+    dl.innerHTML=cards.concat(extras).join('');
+  }catch(_){/* leave datalist empty — input still functional */}
+}
+loadNoteConfig();
+function show(id){['form-view','review-view','done-view'].forEach(x=>document.getElementById(x).className='view');document.getElementById(id).className='view active';}
+function showErr(id,msg){const e=document.getElementById(id);e.textContent=msg;e.style.display='block';}
+function hideErr(id){document.getElementById(id).style.display='none';}
+
+// Set today's date as default
+(function(){
+  const d=new Date();
+  const pad=n=>String(n).padStart(2,'0');
+  document.getElementById('f-date').value=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+})();
+
+function goReview(){
+  const date=v('f-date'),desc=v('f-desc'),amount=v('f-amount');
+  if(!date||!desc||!amount){showErr('form-err','Date, description, and amount are required.');return;}
+  if(isNaN(parseInt(amount))||parseInt(amount)<0){showErr('form-err','Amount must be a non-negative number.');return;}
+  hideErr('form-err');
+  hideErr('review-err');
+  document.getElementById('r-date').textContent=date;
+  document.getElementById('r-desc').textContent=desc;
+  document.getElementById('r-amount').textContent='฿'+parseInt(amount).toLocaleString();
+  document.getElementById('r-cat').textContent=v('f-cat')||'blank';
+  document.getElementById('r-note').textContent=v('f-note')||'blank';
+  show('review-view');
+}
+
+function goBack(){hideErr('review-err');show('form-view');}
+
+async function doCommit(){
+  const btn=document.getElementById('btn-commit');
+  const back=document.getElementById('btn-back');
+  hideErr('review-err');
+  btn.disabled=true;back.disabled=true;
+  const origText=btn.textContent;
+  btn.textContent='Committing…';
+
+  const payload={
+    Date:        v('f-date'),
+    Description: v('f-desc'),
+    Amount:      v('f-amount'),
+    Category:    v('f-cat'),
+    Note:        v('f-note'),
+  };
+
+  try{
+    const data=await DataSource.submitEntry(payload);
+    const row=data.row||{};
+    const desc=row.Description||payload.Description;
+    const amount='฿'+parseInt(row.Amount||payload.Amount).toLocaleString();
+    const date=row.Date||payload.Date;
+    const ref=row.RefID||'manual';
+    document.getElementById('done-summary').innerHTML=
+      `${desc} · ${amount}<br>${date} · source: ${ref}`;
+    show('done-view');
+  }catch(e){
+    showErr('review-err','Commit failed: '+e.message);
+    btn.disabled=false;back.disabled=false;
+    btn.textContent=origText;
+  }
+}
+
+function doReset(){
+  ['f-desc','f-amount'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('f-cat').value='';
+  document.getElementById('f-note').value='';
+  hideErr('form-err');
+  hideErr('review-err');
+  const btn=document.getElementById('btn-commit');
+  if(btn){btn.disabled=false;btn.textContent='✓ Commit';}
+  const back=document.getElementById('btn-back');
+  if(back){back.disabled=false;}
+  show('form-view');
+}
+</script>
+</body>
+</html>
