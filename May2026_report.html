@@ -44,12 +44,22 @@
   .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
   .legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);}
   .legend-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0;}
-  .goal-row{margin-bottom:12px;}
-  .goal-header{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;}
-  .goal-header span:last-child{font-family:var(--mono);color:var(--text-muted);}
+  .goal-row{margin-bottom:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .goal-row:active{background:#fafaf6;}
+  .goal-header{display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;}
+  .goal-header .right{font-family:var(--mono);color:var(--text-muted);display:flex;align-items:center;gap:6px;}
+  .goal-chev{font-size:10px;color:var(--text-faint);transition:transform 0.15s ease;display:inline-block;line-height:1;}
+  .goal-row.open .goal-chev{transform:rotate(90deg);}
   .goal-status{font-size:11px;font-family:var(--mono);margin-top:3px;}
   .goal-status.over{color:var(--red);}
   .goal-status.close{color:var(--amber);}
+  .goal-entries{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);display:none;}
+  .goal-row.open .goal-entries{display:block;}
+  .goal-entry{display:grid;grid-template-columns:48px 1fr 70px;gap:8px;font-size:11px;padding:5px 0;align-items:center;}
+  .goal-entry .ed{font-family:var(--mono);color:var(--text-faint);}
+  .goal-entry .en{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .goal-entry .ea{font-family:var(--mono);color:var(--text-muted);text-align:right;}
+  .goal-entry.empty{color:var(--text-faint);font-family:var(--mono);grid-column:1/-1;text-align:center;padding:8px 0;}
   footer{margin-top:24px;border-top:1px solid var(--border);padding-top:12px;font-size:11px;color:var(--text-faint);font-family:var(--mono);line-height:1.7;}
   .home-btn{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted);text-decoration:none;font-family:var(--mono);padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);margin-bottom:8px;}
   .home-btn:hover{background:var(--surface);}
@@ -314,6 +324,11 @@ async function initReport() {
     if (Object.keys(spendingGoals).length === 0) {
       goalWrap.innerHTML = '<p style="font-size:12px;color:var(--text-muted);margin-top:10px;">No category goals set.</p>';
     } else {
+      // Tiny escaper for description text (slips can contain stray chars).
+      const esc = (s) => String(s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+
       Object.entries(spendingGoals)
         .sort((a, b) => b[1] - a[1])
         .forEach(([cat, goal]) => {
@@ -324,16 +339,35 @@ async function initReport() {
           const barClass = over ? 'red' : close ? 'amber' : 'green';
           const statusText = over ? `Over by ฿${(spent - goal).toLocaleString()}` : close ? 'Close to limit' : '';
           const statusClass = over ? 'over' : close ? 'close' : '';
+
+          // Build the per-category entries list — chronological so the most
+          // recent purchase reads last, matching how the user enters them.
+          const entries = spendRows
+            .filter(r => (r.Category || '') === cat)
+            .sort((a, b) => new Date(a.Date) - new Date(b.Date));
+          const entriesHtml = entries.length === 0
+            ? '<div class="goal-entry empty">No entries yet this month</div>'
+            : entries.map(r => {
+                const d = new Date(r.Date);
+                const dStr = isNaN(d) ? (r.Date || '') :
+                  d.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
+                const desc = (r.Description || '').trim() || '(no description)';
+                const amt = parseInt(r.Amount) || 0;
+                return `<div class="goal-entry"><span class="ed">${esc(dStr)}</span><span class="en">${esc(desc)}</span><span class="ea">฿${amt.toLocaleString()}</span></div>`;
+              }).join('');
+
           const el = document.createElement('div');
           el.className = 'goal-row';
           el.innerHTML = `
             <div class="goal-header">
-              <span>${cat}</span>
-              <span>฿${spent.toLocaleString()} / ฿${goal.toLocaleString()}</span>
+              <span>${esc(cat)}</span>
+              <span class="right">฿${spent.toLocaleString()} / ฿${goal.toLocaleString()} <span class="goal-chev">▶</span></span>
             </div>
             <div class="progress-track"><div class="progress-bar ${barClass}" style="width:${pct}%"></div></div>
             ${statusText ? `<div class="goal-status ${statusClass}">${statusText}</div>` : ''}
+            <div class="goal-entries">${entriesHtml}</div>
           `;
+          el.addEventListener('click', () => el.classList.toggle('open'));
           goalWrap.appendChild(el);
         });
     }
