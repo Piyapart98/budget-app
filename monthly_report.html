@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>May 2026 — Budget Report</title>
+<title>Monthly Report — Budget</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <style>
@@ -75,8 +75,8 @@
 <header>
   <a href="./" class="home-btn">← Home</a>
   <div class="header-label">Budget report · pipeline v4</div>
-  <div class="header-title">May 2026</div>
-  <div class="header-sub">Generated 10 May 2026 · 42 transactions</div>
+  <div class="header-title" id="month-title">Loading…</div>
+  <div class="header-sub" id="month-sub">—</div>
 </header>
 <main>
   <div class="cards">
@@ -120,7 +120,7 @@
   <div id="goal-rows"></div>
 
   <div class="footer">
-    <footer>Goals from goals.json · pipeline v4 · May2026_report.html</footer>
+    <footer>Goals from goals.json · pipeline v4 · monthly_report.html</footer>
   </div>
 </main>
 
@@ -153,16 +153,33 @@ async function initReport() {
     const INCOME_CATEGORIES = new Set(incomeList);
     const isIncome = (cat) => INCOME_CATEGORIES.has((cat || '').trim());
 
-    // Filter: May 2026, not deleted
-    const mayRows = database.filter(row => {
+    // Which month are we showing? Read ?month=YYYY-MM from the URL; if absent
+    // or malformed, default to the current month. The picker UI in Phase 3
+    // will write to this same param so reload preserves the selection.
+    const params = new URLSearchParams(window.location.search);
+    let monthParam = params.get('month');
+    if (!monthParam || !/^\d{4}-(0[1-9]|1[0-2])$/.test(monthParam)) {
+      const now = new Date();
+      monthParam = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+    const [targetYear, targetMonth1] = monthParam.split('-').map(Number);
+    const targetMonthIdx = targetMonth1 - 1; // JS Date months are 0-indexed
+
+    const MONTH_NAMES = ['January','February','March','April','May','June',
+                         'July','August','September','October','November','December'];
+    const monthLabel = `${MONTH_NAMES[targetMonthIdx]} ${targetYear}`;
+    document.title = `${monthLabel} — Budget Report`;
+
+    // Filter: target month, not deleted
+    const monthRows = database.filter(row => {
       if (row.Deleted === 'True' || row.Deleted === true) return false;
       const date = new Date(row.Date);
-      return date.getFullYear() === 2026 && date.getMonth() === 4; // May is month 4 (0-indexed)
+      return date.getFullYear() === targetYear && date.getMonth() === targetMonthIdx;
     });
 
     // Split rows by spending vs income so the spending charts stay clean.
-    const spendRows  = mayRows.filter(r => !isIncome(r.Category));
-    const incomeRows = mayRows.filter(r =>  isIncome(r.Category));
+    const spendRows  = monthRows.filter(r => !isIncome(r.Category));
+    const incomeRows = monthRows.filter(r =>  isIncome(r.Category));
 
     // Calculate category totals — SPENDING ONLY
     const categoryMap = {};
@@ -196,11 +213,13 @@ async function initReport() {
     const colors = cats.map((_, i) => colorPalette[i % colorPalette.length]);
     const total = vals.reduce((a, b) => a + b, 0);
 
-    // Update header — transaction count covers BOTH spending and income rows so
-    // the user sees the true total. Total spent below is spending-only.
+    // Update header — title shows the month being viewed; sub shows the
+    // generate-stamp + transaction count (covers BOTH spending and income).
     const now = new Date();
     const dateStr = now.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
-    document.querySelector('.header-sub').textContent = `Generated ${dateStr} · ${mayRows.length} transactions`;
+    document.getElementById('month-title').textContent = monthLabel;
+    document.getElementById('month-sub').textContent =
+      `Generated ${dateStr} · ${monthRows.length} transactions`;
 
     // Update summary cards
     const monthlyGoal = goalsData.monthly_total || 0;

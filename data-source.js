@@ -1,6 +1,6 @@
 /*
   data-source.js — single abstraction layer for all data reads/writes used by
-  entry_form.html, edit_log.html, and May2026_report.html.
+  entry_form.html, edit_log.html, and monthly_report.html.
 
   Two modes, auto-detected from window.location.hostname:
 
