@@ -24,10 +24,14 @@
   .header-sub{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-top:3px;}
   main{padding:14px 16px;}
   .section-title{font-size:13px;font-weight:500;margin-bottom:10px;margin-top:20px;}
-  .cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:0;}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:13px;}
+  /* Three-up cards: spent / goal / income. font-size scales fluidly so a
+     6-digit baht number ("฿999,999") still fits on a narrow phone (~320px).
+     clamp lower-bound was sized against iPhone SE: at 320px width each
+     card has ~66px of text area; 14px mono = ~67px for "฿999,999". */
+  .cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:0;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;min-width:0;}
   .card-label{font-size:11px;color:var(--text-muted);margin-bottom:4px;}
-  .card-val{font-size:22px;font-weight:500;font-family:var(--mono);}
+  .card-val{font-size:clamp(14px, 4.5vw, 22px);font-weight:500;font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .card-sub{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-top:3px;}
   .card-val.green{color:var(--green);}
   .progress-wrap{margin-top:20px;}
@@ -69,13 +73,41 @@
   .income-row .amt{font-family:var(--mono);color:var(--green);font-weight:500;}
   .income-total{display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:4px;border-top:2px solid var(--border);font-size:13px;font-weight:500;}
   .income-total .amt{font-family:var(--mono);color:var(--green);}
+  /* Month picker — arrows on the sides + tappable title in the middle.
+     Tapping the title opens a modal grid (.picker-modal) for jumping
+     across months/years. URL ?month= drives state in all cases. */
+  .picker-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0 0;}
+  .picker-arrow{background:var(--bg);border:1px solid var(--border);border-radius:6px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--text-muted);font-family:var(--mono);cursor:pointer;-webkit-tap-highlight-color:transparent;padding:0;flex-shrink:0;}
+  .picker-arrow:hover{background:var(--surface);}
+  .picker-arrow:active{background:#e8e6dd;}
+  .picker-title-btn{flex:1;font-size:22px;font-weight:500;text-align:center;background:transparent;border:none;color:var(--text);cursor:pointer;font-family:var(--sans);padding:4px 8px;border-bottom:1px dashed transparent;-webkit-tap-highlight-color:transparent;}
+  .picker-title-btn:hover{border-bottom-color:var(--border);}
+  .picker-title-btn .picker-chev{font-size:11px;color:var(--text-faint);margin-left:6px;vertical-align:2px;}
+  .picker-modal{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:none;align-items:center;justify-content:center;z-index:50;padding:16px;}
+  .picker-modal.open{display:flex;}
+  .picker-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;width:100%;max-width:340px;}
+  .picker-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+  .picker-head .t{font-size:14px;font-weight:500;}
+  .picker-close{font-size:18px;color:var(--text-muted);cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px;}
+  .picker-close:hover{background:var(--bg);}
+  .picker-year{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-family:var(--mono);color:var(--text-muted);margin-bottom:10px;padding:2px 0;}
+  .picker-year .yr{font-weight:500;color:var(--text);font-size:14px;}
+  .picker-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
+  .month-chip{font-size:11px;font-family:var(--mono);text-align:center;padding:9px 0;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text-muted);cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .month-chip:hover{background:var(--surface);}
+  .month-chip.current{background:var(--green-bg);border-color:var(--green);color:var(--green);font-weight:500;}
+  .month-chip.empty{opacity:0.45;color:var(--text-faint);}
 </style>
 </head>
 <body>
 <header>
   <a href="./" class="home-btn">← Home</a>
   <div class="header-label">Budget report · pipeline v4</div>
-  <div class="header-title" id="month-title">Loading…</div>
+  <div class="picker-row">
+    <button class="picker-arrow" id="prev-month" aria-label="Previous month">‹</button>
+    <button class="picker-title-btn" id="month-label-btn">Loading… <span class="picker-chev">▼</span></button>
+    <button class="picker-arrow" id="next-month" aria-label="Next month">›</button>
+  </div>
   <div class="header-sub" id="month-sub">—</div>
 </header>
 <main>
@@ -88,6 +120,10 @@
       <div class="card-label">Monthly goal</div>
       <div class="card-val green">฿25,000</div>
       <div class="card-sub">฿6,580 remaining</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total income</div>
+      <div class="card-val green">฿0</div>
     </div>
   </div>
 
@@ -123,6 +159,24 @@
     <footer>Goals from goals.json · pipeline v4 · monthly_report.html</footer>
   </div>
 </main>
+
+<!-- Month picker modal — opened by tapping the month title in the header.
+     Year arrows step inside the modal without reloading; tapping any month
+     chip writes ?month=YYYY-MM and reloads the page. -->
+<div class="picker-modal" id="picker-modal" role="dialog" aria-modal="true" aria-label="Select month">
+  <div class="picker-card">
+    <div class="picker-head">
+      <div class="t">Select month</div>
+      <div class="picker-close" id="picker-close" aria-label="Close">✕</div>
+    </div>
+    <div class="picker-year">
+      <button class="picker-arrow" id="prev-year" aria-label="Previous year">‹</button>
+      <span class="yr" id="picker-year-label">2026</span>
+      <button class="picker-arrow" id="next-year" aria-label="Next year">›</button>
+    </div>
+    <div class="picker-grid" id="picker-month-chips"></div>
+  </div>
+</div>
 
 <script src="data-source.js"></script>
 <script>
@@ -213,13 +267,82 @@ async function initReport() {
     const colors = cats.map((_, i) => colorPalette[i % colorPalette.length]);
     const total = vals.reduce((a, b) => a + b, 0);
 
-    // Update header — title shows the month being viewed; sub shows the
-    // generate-stamp + transaction count (covers BOTH spending and income).
+    // Update header — picker title shows the month being viewed; sub shows
+    // the generate-stamp + transaction count (covers BOTH spending and income).
     const now = new Date();
     const dateStr = now.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
-    document.getElementById('month-title').textContent = monthLabel;
+    document.getElementById('month-label-btn').innerHTML =
+      `${monthLabel} <span class="picker-chev">▼</span>`;
     document.getElementById('month-sub').textContent =
       `Generated ${dateStr} · ${monthRows.length} transactions`;
+
+    // ---------- Month picker wiring ------------------------------------
+    // Pre-compute which YYYY-MM strings have at least one non-deleted row.
+    // Faded chips in the modal grid signal "no data here yet" without
+    // disabling navigation (user might still want to view an empty month).
+    const MONTHS_WITH_DATA = new Set();
+    database.forEach(r => {
+      if (r.Deleted === 'True' || r.Deleted === true) return;
+      if (r.Date && r.Date.length >= 7) MONTHS_WITH_DATA.add(r.Date.slice(0, 7));
+    });
+
+    function navigateToMonth(year, month1) {
+      // Step to a new month by rewriting the URL ?month= and reloading.
+      // Reload is simpler than re-rendering — the page already does all
+      // its work on load, and it's instant on local Flask.
+      const ym = `${year}-${String(month1).padStart(2, '0')}`;
+      const url = new URL(window.location.href);
+      url.searchParams.set('month', ym);
+      window.location.href = url.toString();
+    }
+    function stepMonth(delta) {
+      let y = targetYear, m = targetMonth1 + delta;
+      while (m < 1)  { m += 12; y -= 1; }
+      while (m > 12) { m -= 12; y += 1; }
+      navigateToMonth(y, m);
+    }
+    document.getElementById('prev-month').addEventListener('click', () => stepMonth(-1));
+    document.getElementById('next-month').addEventListener('click', () => stepMonth(1));
+
+    // Modal grid — opens on title click, closes on backdrop/X/Escape.
+    const modal = document.getElementById('picker-modal');
+    const yearLabel = document.getElementById('picker-year-label');
+    const chipsEl = document.getElementById('picker-month-chips');
+    let displayedYear = targetYear;
+
+    function renderChips() {
+      yearLabel.textContent = displayedYear;
+      chipsEl.innerHTML = '';
+      for (let m = 1; m <= 12; m++) {
+        const ym = `${displayedYear}-${String(m).padStart(2, '0')}`;
+        const hasData = MONTHS_WITH_DATA.has(ym);
+        const isCurrent = displayedYear === targetYear && m === targetMonth1;
+        const chip = document.createElement('button');
+        let cls = 'month-chip';
+        if (isCurrent) cls += ' current';
+        else if (!hasData) cls += ' empty';
+        chip.className = cls;
+        chip.textContent = MONTH_NAMES[m - 1].slice(0, 3);
+        chip.addEventListener('click', () => navigateToMonth(displayedYear, m));
+        chipsEl.appendChild(chip);
+      }
+    }
+    function openPicker() {
+      displayedYear = targetYear;
+      renderChips();
+      modal.classList.add('open');
+    }
+    function closePicker() {
+      modal.classList.remove('open');
+    }
+    document.getElementById('month-label-btn').addEventListener('click', openPicker);
+    document.getElementById('picker-close').addEventListener('click', closePicker);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closePicker(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal.classList.contains('open')) closePicker();
+    });
+    document.getElementById('prev-year').addEventListener('click', () => { displayedYear -= 1; renderChips(); });
+    document.getElementById('next-year').addEventListener('click', () => { displayedYear += 1; renderChips(); });
 
     // Update summary cards
     const monthlyGoal = goalsData.monthly_total || 0;
@@ -229,6 +352,7 @@ async function initReport() {
     document.querySelector('.cards .card:nth-child(1) .card-val').textContent = '฿' + total.toLocaleString();
     document.querySelector('.cards .card:nth-child(2) .card-val').textContent = '฿' + monthlyGoal.toLocaleString();
     document.querySelector('.cards .card:nth-child(2) .card-sub').textContent = '฿' + remaining.toLocaleString() + ' remaining';
+    document.querySelector('.cards .card:nth-child(3) .card-val').textContent = '฿' + incomeTotal.toLocaleString();
 
     // Update progress bar
     const progressBar = document.querySelector('.progress-bar');
