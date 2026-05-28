@@ -41,9 +41,16 @@
   // The Mac side reads the CSVs by header name so order isn't strictly
   // required for correctness, but keeping them aligned makes diffs readable.
   var DB_COLUMNS = ['Date', 'Description', 'Amount', 'Category', 'Note',
-                    'RefID', 'ReviewedAt', 'Edited', 'Deleted'];
+                    'RefID', 'ReviewedAt', 'Edited', 'Deleted',
+                    'settlement_id', 'roong_share'];
   var CHANGELOG_COLUMNS = ['Timestamp', 'RefID', 'Action', 'Field',
                            'OldValue', 'NewValue', 'Reason'];
+  var ROONG_SETTLEMENT_COLUMNS = [
+    'settlement_id', 'created_at', 'status', 'requested_amount',
+    'row_ids', 'slip_file', 'confirmed_at', 'confirmed_method',
+  ];
+  var ROONG_CATEGORY = 'With Roong';
+  var ROONG_SETTLEMENTS_PATH = 'roong_settlements.csv';
 
   // -------------------------------------------------------------------------
   // Token management (GitHub mode only)
@@ -432,6 +439,192 @@
   }
 
   // -------------------------------------------------------------------------
+  // Roong Settlement helpers
+  // -------------------------------------------------------------------------
+
+  // Generate next settlement ID from a list of existing settlement rows.
+  function nextSettlementId(rows) {
+    var max = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var sid = (rows[i].settlement_id || '').trim();
+      if (/^S\d+$/i.test(sid)) {
+        var n = parseInt(sid.slice(1), 10);
+        if (n > max) max = n;
+      }
+    }
+    var next = max + 1;
+    return 'S' + (next < 10 ? '00' + next : next < 100 ? '0' + next : next);
+  }
+
+  // Enrich a list of settlement records with their expense_rows from db rows.
+  function enrichWithExpenseRows(settlements, dbRows) {
+    for (var i = 0; i < settlements.length; i++) {
+      var sid = settlements[i].settlement_id;
+      settlements[i].expense_rows = dbRows.filter(function (r) {
+        return r.settlement_id === sid &&
+               String(r.Deleted || '').toLowerCase() !== 'true';
+      });
+    }
+    return settlements;
+  }
+
+  async function loadRoongUnsettled() {
+    var db = await loadDatabase();
+    return db.filter(function (r) {
+      return r.Category === ROONG_CATEGORY &&
+             !(r.settlement_id || '').trim() &&
+             String(r.Deleted || '').toLowerCase() !== 'true';
+    });
+  }
+
+  async function loadRoongPending() {
+    if (MODE === 'local') {
+      var res = await fetch('/api/roong/pending');
+      if (!res.ok) throw new Error('GET /api/roong/pending: ' + res.status);
+      return res.json();
+    }
+    var got = await ghGet(ROONG_SETTLEMENTS_PATH);
+    var settlements = csvToObjects(got.content);
+    var pending = settlements.filter(function (s) { return s.status === 'pending'; });
+    var db = await loadDatabase();
+    return enrichWithExpenseRows(pending, db);
+  }
+
+  async function loadRoongHistory() {
+    if (MODE === 'local') {
+      var res = await fetch('/api/roong/history');
+      if (!res.ok) throw new Error('GET /api/roong/history: ' + res.status);
+      return res.json();
+    }
+    var got = await ghGet(ROONG_SETTLEMENTS_PATH);
+    var settlements = csvToObjects(got.content);
+    var settled = settlements.filter(function (s) { return s.status === 'settled'; });
+    settled.sort(function (a, b) {
+      var ka = a.confirmed_at || a.created_at || '';
+      var kb = b.confirmed_at || b.created_at || '';
+      return ka < kb ? 1 : ka > kb ? -1 : 0;
+    });
+    var db = await loadDatabase();
+    return enrichWithExpenseRows(settled, db);
+  }
+
+  async function submitRoongRequest(rowsPayload) {
+    // rowsPayload: [{RefID, roong_share}, ...]
+    if (MODE === 'local') {
+      var res = await fetch('/api/roong/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: rowsPayload }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+      return data;
+    }
+
+    var ts = nowHuman();
+    var sid;
+    var totalShare = 0;
+    var refIds = rowsPayload.map(function (r) { return r.RefID; });
+    var shareMap = {};
+    rowsPayload.forEach(function (r) {
+      shareMap[r.RefID] = r.roong_share;
+      totalShare += parseFloat(r.roong_share) || 0;
+    });
+
+    // Read settlements first to derive next settlement ID
+    var settleGot = await ghGet(ROONG_SETTLEMENTS_PATH);
+    var settleRows = csvToObjects(settleGot.content);
+    sid = nextSettlementId(settleRows);
+
+    // Step 1: stamp DB rows
+    await mutateCsv('database.csv', function (rows) {
+      for (var i = 0; i < rows.length; i++) {
+        if (refIds.indexOf(rows[i].RefID) !== -1) {
+          rows[i].settlement_id = sid;
+          rows[i].roong_share = String(shareMap[rows[i].RefID]);
+        }
+      }
+      return rows;
+    }, 'roong request ' + sid + ': stamp ' + refIds.length + ' rows', DB_COLUMNS);
+
+    // Step 2: append settlement record
+    var newSettlement = {
+      settlement_id:    sid,
+      created_at:       ts,
+      status:           'pending',
+      requested_amount: String(totalShare),
+      row_ids:          refIds.join('|'),
+      slip_file:        '',
+      confirmed_at:     '',
+      confirmed_method: '',
+    };
+    settleRows.push(newSettlement);
+    var newSettleCsv = objectsToCsv(settleRows, ROONG_SETTLEMENT_COLUMNS);
+    await ghPut(ROONG_SETTLEMENTS_PATH, newSettleCsv, settleGot.sha,
+                'roong request: create ' + sid);
+
+    return { ok: true, settlement_id: sid };
+  }
+
+  async function confirmRoong(settlementId) {
+    // Slip upload is Mac-only (needs server filesystem). On GitHub mode
+    // we always confirm as manual.
+    if (MODE === 'local') {
+      // Called from the manual path — use FormData
+      var fd = new FormData();
+      fd.append('settlement_id', settlementId);
+      fd.append('method', 'manual');
+      var res = await fetch('/api/roong/confirm', { method: 'POST', body: fd });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+      return data;
+    }
+    var ts = nowHuman();
+    await mutateCsv(ROONG_SETTLEMENTS_PATH, function (rows) {
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].settlement_id === settlementId) {
+          rows[i].status = 'settled';
+          rows[i].confirmed_at = ts;
+          rows[i].confirmed_method = 'manual';
+          break;
+        }
+      }
+      return rows;
+    }, 'roong confirm: ' + settlementId, ROONG_SETTLEMENT_COLUMNS);
+    return { ok: true, settlement_id: settlementId, confirmed_at: ts, requested_amount: '' };
+  }
+
+  async function cancelRoong(settlementId) {
+    if (MODE === 'local') {
+      var res = await fetch('/api/roong/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settlement_id: settlementId }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+      return data;
+    }
+    // Step 1: clear settlement_id + roong_share from DB rows
+    await mutateCsv('database.csv', function (rows) {
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].settlement_id === settlementId) {
+          rows[i].settlement_id = '';
+          rows[i].roong_share = '';
+        }
+      }
+      return rows;
+    }, 'roong cancel: unstamp ' + settlementId, DB_COLUMNS);
+
+    // Step 2: remove the settlement record
+    await mutateCsv(ROONG_SETTLEMENTS_PATH, function (rows) {
+      return rows.filter(function (r) { return r.settlement_id !== settlementId; });
+    }, 'roong cancel: remove ' + settlementId, ROONG_SETTLEMENT_COLUMNS);
+
+    return { ok: true, settlement_id: settlementId };
+  }
+
+  // -------------------------------------------------------------------------
   // Export
   // -------------------------------------------------------------------------
 
@@ -442,15 +635,22 @@
     REPO_OWNER:     REPO_OWNER,
     REPO_NAME:      REPO_NAME,
 
-    loadDatabase:   loadDatabase,
-    loadChangelog:  loadChangelog,
-    loadGoals:      loadGoals,
-    loadConfig:     loadConfig,
-    submitEntry:    submitEntry,
-    submitEdit:     submitEdit,
-    submitDelete:   submitDelete,
+    loadDatabase:        loadDatabase,
+    loadChangelog:       loadChangelog,
+    loadGoals:           loadGoals,
+    loadConfig:          loadConfig,
+    submitEntry:         submitEntry,
+    submitEdit:          submitEdit,
+    submitDelete:        submitDelete,
 
-    resetToken:     resetToken,
+    loadRoongUnsettled:  loadRoongUnsettled,
+    loadRoongPending:    loadRoongPending,
+    loadRoongHistory:    loadRoongHistory,
+    submitRoongRequest:  submitRoongRequest,
+    confirmRoong:        confirmRoong,
+    cancelRoong:         cancelRoong,
+
+    resetToken:          resetToken,
   };
 
   // -------------------------------------------------------------------------

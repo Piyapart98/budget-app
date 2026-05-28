@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roong Settlement — Budget</title>
+<script src="data-source.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap');
+  :root{
+    --bg:#f5f4f0;--surface:#fff;--border:#e2e0d8;
+    --text:#1a1917;--text-muted:#6b6860;--text-faint:#a8a59e;
+    --green:#1a6b3c;--green-bg:#edf7f1;--green-border:#b2ddc4;
+    --amber:#a05c00;--amber-bg:#fff8ed;
+    --red:#b83232;--red-bg:#fef2f2;
+    --blue:#1a4fa0;--blue-bg:#eef3fc;--blue-border:#b8ccee;
+    --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:var(--sans);background:var(--bg);color:var(--text);padding-bottom:env(safe-area-inset-bottom,24px);}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:16px;}
+  .header-label{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-bottom:2px;}
+  .header-title{font-size:22px;font-weight:500;}
+  .home-btn{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted);text-decoration:none;font-family:var(--mono);padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);margin-bottom:8px;}
+  .home-btn:hover{background:var(--surface);}
+  main{padding:14px 16px;}
+
+  /* Section titles */
+  .section-title{font-size:13px;font-weight:500;margin-bottom:10px;margin-top:20px;color:var(--text-muted);text-transform:uppercase;font-family:var(--mono);letter-spacing:.04em;}
+  .section-title:first-child{margin-top:0;}
+
+  /* Expense row (unsettled) */
+  .expense-row{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;display:flex;align-items:flex-start;gap:10px;transition:opacity .2s,border-color .2s;}
+  .expense-row.unchecked{opacity:0.55;}
+  .expense-row input[type=checkbox]{width:18px;height:18px;flex-shrink:0;margin-top:2px;accent-color:var(--green);cursor:pointer;}
+  .expense-body{flex:1;min-width:0;}
+  .exp-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
+  .exp-desc{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .exp-total{font-family:var(--mono);font-size:13px;color:var(--text-muted);flex-shrink:0;}
+  .exp-meta{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-top:2px;}
+  .share-inputs{display:flex;align-items:center;gap:6px;margin-top:8px;}
+  .share-inputs label{font-size:11px;color:var(--text-muted);font-family:var(--mono);white-space:nowrap;}
+  .share-inputs input{font-family:var(--mono);font-size:13px;border:1px solid var(--border);border-radius:5px;padding:5px 7px;background:var(--bg);color:var(--text);width:80px;-webkit-appearance:none;}
+  .share-inputs input:focus{outline:2px solid var(--green);outline-offset:-1px;border-color:transparent;}
+  .share-sep{font-size:11px;color:var(--text-faint);font-family:var(--mono);}
+  .share-preview{font-size:11px;color:var(--green);font-family:var(--mono);margin-top:3px;}
+
+  /* Summary bar */
+  .summary-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 16px 12px;padding-bottom:max(12px,env(safe-area-inset-bottom));margin:0 -16px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .summary-info{min-width:0;}
+  .summary-count{font-size:11px;color:var(--text-muted);font-family:var(--mono);}
+  .summary-total{font-size:18px;font-weight:500;font-family:var(--mono);}
+  .summary-her{font-size:11px;color:var(--green);font-family:var(--mono);margin-top:1px;}
+  .btn-send{background:var(--green);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:500;font-family:var(--sans);cursor:pointer;white-space:nowrap;flex-shrink:0;-webkit-tap-highlight-color:transparent;}
+  .btn-send:disabled{background:var(--border);color:var(--text-faint);cursor:default;}
+  .btn-send:not(:disabled):active{background:#155a32;}
+
+  /* Pending batch card */
+  .batch-card{background:var(--surface);border:1px solid var(--blue-border);border-radius:10px;padding:14px;margin-bottom:12px;}
+  .batch-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;}
+  .batch-id{font-family:var(--mono);font-size:11px;color:var(--text-faint);}
+  .batch-amount{font-family:var(--mono);font-size:16px;font-weight:500;color:var(--blue);}
+  .batch-meta{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-bottom:12px;}
+
+  /* Shareable text */
+  .shareable-wrap{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:10px;}
+  .shareable-text{font-family:var(--mono);font-size:12px;color:var(--text);white-space:pre;line-height:1.7;overflow-x:auto;}
+  .btn-copy{display:flex;align-items:center;gap:5px;font-size:12px;font-family:var(--mono);border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text-muted);padding:6px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:12px;width:fit-content;}
+  .btn-copy:active{background:var(--surface);}
+  .btn-copy.copied{color:var(--green);border-color:var(--green-border);}
+
+  /* Select-all row */
+  .select-all-row{display:flex;align-items:center;gap:8px;padding:6px 2px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;}
+  .select-all-row input[type=checkbox]{width:18px;height:18px;flex-shrink:0;accent-color:var(--green);cursor:pointer;}
+  .select-all-label{font-size:12px;color:var(--text-muted);font-family:var(--mono);}
+
+  /* Batch actions */
+  .batch-actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .btn-upload,.btn-confirm,.btn-cancel{flex:1;min-width:100px;padding:10px 12px;border-radius:7px;font-size:13px;font-weight:500;font-family:var(--sans);cursor:pointer;text-align:center;-webkit-tap-highlight-color:transparent;border:1px solid;}
+  .btn-upload{background:var(--bg);border-color:var(--border);color:var(--text-muted);}
+  .btn-upload:active{background:var(--surface);}
+  .btn-confirm{background:var(--green);border-color:var(--green);color:#fff;}
+  .btn-confirm:active{background:#155a32;}
+  .btn-confirm:disabled{background:var(--border);border-color:var(--border);color:var(--text-faint);cursor:default;}
+  .btn-cancel{background:var(--bg);border-color:var(--border);color:var(--red);}
+  .btn-cancel:active{background:var(--red-bg);}
+  input.slip-file-input{display:none;}
+
+  /* Confirmed banner */
+  .banner{background:var(--green-bg);border:1px solid var(--green-border);border-radius:10px;padding:14px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;}
+  .banner-icon{font-size:20px;line-height:1;flex-shrink:0;}
+  .banner-body{}
+  .banner-title{font-size:14px;font-weight:500;color:var(--green);margin-bottom:3px;}
+  .banner-meta{font-size:11px;color:var(--text-muted);font-family:var(--mono);line-height:1.6;}
+
+  /* History */
+  .hist-row{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .hist-row:active{background:#fafaf6;}
+  .hist-header{display:flex;justify-content:space-between;align-items:center;padding:12px;}
+  .hist-left{}
+  .hist-id{font-family:var(--mono);font-size:11px;color:var(--text-faint);}
+  .hist-amount{font-size:15px;font-weight:500;font-family:var(--mono);margin-top:1px;}
+  .hist-date{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-top:2px;}
+  .hist-right{display:flex;align-items:center;gap:6px;}
+  .hist-badge{font-size:10px;font-family:var(--mono);background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);border-radius:4px;padding:2px 6px;}
+  .hist-chev{font-size:10px;color:var(--text-faint);transition:transform .15s ease;display:inline-block;line-height:1;}
+  .hist-row.open .hist-chev{transform:rotate(90deg);}
+  .hist-entries{border-top:1px dashed var(--border);padding:10px 12px;display:none;}
+  .hist-row.open .hist-entries{display:block;}
+  .hist-entry{display:grid;grid-template-columns:48px 1fr auto;gap:8px;font-size:11px;padding:5px 0;align-items:center;}
+  .hist-entry .he-date{font-family:var(--mono);color:var(--text-faint);}
+  .hist-entry .he-desc{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .hist-entry .he-share{font-family:var(--mono);color:var(--green);text-align:right;white-space:nowrap;}
+
+  /* Empty state */
+  .empty{padding:32px 0;text-align:center;font-size:13px;color:var(--text-faint);font-family:var(--mono);}
+
+  /* Loading */
+  .loading{padding:24px 0;text-align:center;font-size:12px;color:var(--text-faint);font-family:var(--mono);}
+
+  /* Error toast */
+  .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#333;color:#fff;font-size:12px;font-family:var(--mono);padding:8px 14px;border-radius:6px;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center;}
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<header>
+  <a href="./" class="home-btn">← Home</a>
+  <div class="header-label">Budget · Roong Settlement</div>
+  <div class="header-title">With Roong</div>
+</header>
+
+<div class="toast" id="toast"></div>
+
+<main id="main-content">
+  <div class="loading">Loading…</div>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function fmtBaht(n) {
+  const v = parseFloat(n) || 0;
+  return '฿' + (v === Math.round(v) ? Math.round(v).toLocaleString() : v.toFixed(2));
+}
+
+function stripRoong(s) {
+  // Strip trailing "with Roong", "w Roong", "w/ Roong", "w/Roong" (case-insensitive).
+  // Two sub-patterns:
+  //   \s+with\s+roong  — "with" must be surrounded by spaces
+  //   \s+w\/?\s*roong  — "w" or "w/" with optional space before "roong"
+  return (s || '')
+    .replace(/\s+with\s+roong\s*$/i, '')
+    .replace(/\s+w\/?\s*roong\s*$/i, '')
+    .trim();
+}
+
+function fmtDateShort(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-GB', {day:'numeric', month:'short'});
+  } catch { return iso; }
+}
+
+function fmtDateRange(rows) {
+  const dates = rows.map(r => r.Date).filter(Boolean).sort();
+  if (!dates.length) return '';
+  const s = fmtDateShort(dates[0]);
+  const e = fmtDateShort(dates[dates.length - 1]);
+  return s === e ? s : `${s} – ${e}`;
+}
+
+function buildShareableText(rows, shareMap) {
+  const sorted = [...rows].sort((a,b) => (a.Date||'') < (b.Date||'') ? -1 : 1);
+  const dateRange = fmtDateRange(sorted);
+  let lines = [`Date: ${dateRange}`, ''];
+  let total = 0;
+  for (const r of sorted) {
+    const share = shareMap[r.RefID] || 0;
+    total += share;
+    const shareStr = share === Math.round(share) ? `฿${Math.round(share)}` : `฿${share.toFixed(2)}`;
+    lines.push(`* ${fmtDateShort(r.Date)} ${stripRoong(r.Description)} - your share: ${shareStr}`);
+  }
+  lines.push('---');
+  const totStr = total === Math.round(total) ? `฿${Math.round(total)}` : `฿${total.toFixed(2)}`;
+  lines.push(`Total amount: ${totStr}`);
+  return lines.join('\n');
+}
+
+let toastTimer;
+function showToast(msg, ms = 2500) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), ms);
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let unsettled = [];       // [{...row, _pct, _share}]
+let pendingBatches = [];  // [{settlement_id, ...}]
+let lastConfirmed = null; // {settlement_id, created_at, requested_amount, n}
+
+// ---------------------------------------------------------------------------
+// Load everything
+// ---------------------------------------------------------------------------
+async function loadAll() {
+  try {
+    const [u, p] = await Promise.all([
+      DataSource.loadRoongUnsettled(),
+      DataSource.loadRoongPending(),
+    ]);
+    unsettled = u.map(r => ({
+      ...r,
+      _pct: 50,
+      _share: parseFloat(r.Amount || 0) * 0.5,
+      _checked: true,
+    }));
+    pendingBatches = p;
+    render();
+  } catch (e) {
+    document.getElementById('main-content').innerHTML =
+      `<div class="empty">Could not load data.<br>${e.message}</div>`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+function render() {
+  const el = document.getElementById('main-content');
+  let html = '';
+
+  // --- Banner (after confirm) ---
+  if (lastConfirmed) {
+    html += `
+    <div class="banner">
+      <div class="banner-icon">✓</div>
+      <div class="banner-body">
+        <div class="banner-title">Settlement confirmed</div>
+        <div class="banner-meta">
+          ${lastConfirmed.settlement_id} · ${fmtBaht(lastConfirmed.requested_amount)} · ${lastConfirmed.n} expense${lastConfirmed.n===1?'':'s'}<br>
+          ${lastConfirmed.confirmed_at ? fmtDateShort(lastConfirmed.confirmed_at.substring(0,10)) : 'just now'}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // --- Section 1: Unsettled ---
+  const checkedRows = unsettled.filter(r => r._checked);
+  html += `<div class="section-title">Unsettled (${unsettled.length})</div>`;
+
+  if (unsettled.length === 0) {
+    html += `<div class="empty">No unsettled "With Roong" expenses</div>`;
+  } else {
+    const allChecked = unsettled.every(r => r._checked);
+    const someChecked = unsettled.some(r => r._checked);
+    html += `
+    <label class="select-all-row">
+      <input type="checkbox" id="select-all-cb" ${allChecked ? 'checked' : ''} ${!allChecked && someChecked ? 'data-indeterminate="true"' : ''}>
+      <span class="select-all-label">Select all (${unsettled.length})</span>
+    </label>`;
+    for (let i = 0; i < unsettled.length; i++) {
+      const r = unsettled[i];
+      const desc = r.Description || '';
+      const amount = parseFloat(r.Amount || 0);
+      const shareStr = fmtBaht(r._share);
+      html += `
+      <div class="expense-row${r._checked ? '' : ' unchecked'}" id="row-${i}">
+        <input type="checkbox" data-idx="${i}" ${r._checked ? 'checked' : ''}>
+        <div class="expense-body">
+          <div class="exp-top">
+            <div class="exp-desc">${escHtml(desc)}</div>
+            <div class="exp-total">${fmtBaht(amount)}</div>
+          </div>
+          <div class="exp-meta">${fmtDateShort(r.Date)} · ${escHtml(r.Note||'')||'—'} · ${escHtml(r.RefID||'')}</div>
+          ${r._checked ? `
+          <div class="share-inputs">
+            <input type="number" min="0" max="100" step="1" value="${r._pct.toFixed(0)}" data-idx="${i}" data-type="pct" placeholder="%">
+            <span class="share-sep">%  =</span>
+            <input type="number" min="0" step="0.5" value="${r._share.toFixed(2)}" data-idx="${i}" data-type="baht" placeholder="฿">
+          </div>
+          <div class="share-preview" id="preview-${i}">Roong pays ${shareStr}</div>` : ''}
+        </div>
+      </div>`;
+    }
+  }
+
+  // --- Section 2: Pending ---
+  if (pendingBatches.length > 0) {
+    html += `<div class="section-title" style="margin-top:24px;">Pending payment (${pendingBatches.length})</div>`;
+    for (const batch of pendingBatches) {
+      const expRows = batch.expense_rows || [];
+      const shareMap = {};
+      expRows.forEach(r => { shareMap[r.RefID] = parseFloat(r.roong_share || 0); });
+      const text = buildShareableText(expRows, shareMap);
+      const n = expRows.length;
+      html += `
+      <div class="batch-card" id="batch-${escHtml(batch.settlement_id)}">
+        <div class="batch-head">
+          <div>
+            <div class="batch-id">${escHtml(batch.settlement_id)}</div>
+            <div class="batch-amount">${fmtBaht(batch.requested_amount)}</div>
+          </div>
+        </div>
+        <div class="batch-meta">${fmtDateShort((batch.created_at||'').substring(0,10))} · ${n} expense${n===1?'':'s'}</div>
+        <div class="shareable-wrap">
+          <div class="shareable-text" id="st-${escHtml(batch.settlement_id)}">${escHtml(text)}</div>
+        </div>
+        <button class="btn-copy" data-sid="${escHtml(batch.settlement_id)}" onclick="copyText(this)">
+          <span class="copy-icon">⎘</span> Copy text
+        </button>
+        <div class="batch-actions">
+          ${DataSource.isLocal() ? `
+          <label class="btn-upload" style="cursor:pointer;">
+            📎 Upload slip
+            <input class="slip-file-input" type="file" accept="image/*"
+              data-sid="${escHtml(batch.settlement_id)}"
+              onchange="uploadSlip(this)">
+          </label>` : ''}
+          <button class="btn-confirm" data-sid="${escHtml(batch.settlement_id)}"
+            onclick="confirmManual(this)">
+            ✓ Mark received
+          </button>
+          <button class="btn-cancel" data-sid="${escHtml(batch.settlement_id)}"
+            onclick="cancelBatch(this)">
+            ✕ Cancel
+          </button>
+        </div>
+      </div>`;
+    }
+  }
+
+  // --- Section 3: History (stub — link) ---
+  html += `
+  <div class="section-title" style="margin-top:24px;" id="history-section-title">History</div>
+  <div id="history-content"><div class="loading" style="padding:16px 0;">Loading history…</div></div>`;
+
+  // Summary bar (only show if unsettled list exists)
+  if (unsettled.length > 0) {
+    const herTotal = checkedRows.reduce((s, r) => s + r._share, 0);
+    const myTotal = checkedRows.reduce((s, r) => s + (parseFloat(r.Amount||0) - r._share), 0);
+    html += `
+    <div class="summary-bar" id="summary-bar">
+      <div class="summary-info">
+        <div class="summary-count">${checkedRows.length} selected</div>
+        <div class="summary-total">${fmtBaht(herTotal)}</div>
+        <div class="summary-her">Roong's share</div>
+      </div>
+      <button class="btn-send" id="btn-send" ${checkedRows.length===0?'disabled':''}
+        onclick="sendRequest()">
+        Send request${checkedRows.length > 0 ? ` (${checkedRows.length})` : ''}
+      </button>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+  attachListeners();
+  loadHistory();
+}
+
+// ---------------------------------------------------------------------------
+// Event listeners (re-attached after each render)
+// ---------------------------------------------------------------------------
+function attachListeners() {
+  // Select-all checkbox
+  const selectAll = document.getElementById('select-all-cb');
+  if (selectAll) {
+    // Set indeterminate state (can't do in HTML)
+    if (selectAll.dataset.indeterminate === 'true') selectAll.indeterminate = true;
+    selectAll.addEventListener('change', () => {
+      unsettled.forEach(r => { r._checked = selectAll.checked; });
+      render();
+    });
+  }
+
+  // Checkbox toggles
+  document.querySelectorAll('input[type=checkbox][data-idx]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const i = parseInt(cb.dataset.idx);
+      unsettled[i]._checked = cb.checked;
+      render();
+    });
+  });
+
+  // Share inputs
+  document.querySelectorAll('input[data-type=pct]').forEach(input => {
+    input.addEventListener('input', () => {
+      const i = parseInt(input.dataset.idx);
+      const pct = Math.max(0, Math.min(100, parseFloat(input.value) || 0));
+      const amount = parseFloat(unsettled[i].Amount || 0);
+      unsettled[i]._pct = pct;
+      unsettled[i]._share = amount * pct / 100;
+      // Sync ฿ input without triggering its own listener
+      const bahtInput = document.querySelector(`input[data-type=baht][data-idx="${i}"]`);
+      if (bahtInput) bahtInput.value = unsettled[i]._share.toFixed(2);
+      const preview = document.getElementById(`preview-${i}`);
+      if (preview) preview.textContent = `Roong pays ${fmtBaht(unsettled[i]._share)}`;
+      updateSummaryBar();
+    });
+  });
+
+  document.querySelectorAll('input[data-type=baht]').forEach(input => {
+    input.addEventListener('input', () => {
+      const i = parseInt(input.dataset.idx);
+      const amount = parseFloat(unsettled[i].Amount || 0);
+      const share = Math.max(0, parseFloat(input.value) || 0);
+      unsettled[i]._share = share;
+      unsettled[i]._pct = amount > 0 ? Math.round(share / amount * 100) : 0;
+      // Sync % input
+      const pctInput = document.querySelector(`input[data-type=pct][data-idx="${i}"]`);
+      if (pctInput) pctInput.value = unsettled[i]._pct;
+      const preview = document.getElementById(`preview-${i}`);
+      if (preview) preview.textContent = `Roong pays ${fmtBaht(share)}`;
+      updateSummaryBar();
+    });
+  });
+}
+
+function updateSummaryBar() {
+  const checkedRows = unsettled.filter(r => r._checked);
+  const herTotal = checkedRows.reduce((s, r) => s + r._share, 0);
+  const bar = document.getElementById('summary-bar');
+  if (!bar) return;
+  bar.querySelector('.summary-total').textContent = fmtBaht(herTotal);
+  bar.querySelector('.summary-count').textContent = `${checkedRows.length} selected`;
+  const btn = document.getElementById('btn-send');
+  if (btn) {
+    btn.disabled = checkedRows.length === 0;
+    btn.textContent = checkedRows.length > 0 ? `Send request (${checkedRows.length})` : 'Send request';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+async function sendRequest() {
+  const checkedRows = unsettled.filter(r => r._checked);
+  if (!checkedRows.length) return;
+  const btn = document.getElementById('btn-send');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    await DataSource.submitRoongRequest(
+      checkedRows.map(r => ({RefID: r.RefID, roong_share: r._share}))
+    );
+    lastConfirmed = null;
+    const [u, p] = await Promise.all([
+      DataSource.loadRoongUnsettled(),
+      DataSource.loadRoongPending(),
+    ]);
+    unsettled = u.map(r => ({...r, _pct:50, _share:parseFloat(r.Amount||0)*0.5, _checked:true}));
+    pendingBatches = p;
+    render();
+    const pending = document.querySelector('.batch-card');
+    if (pending) pending.scrollIntoView({behavior:'smooth', block:'start'});
+  } catch(e) {
+    showToast('Error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = `Send request (${checkedRows.length})`;
+  }
+}
+
+function copyText(btn) {
+  const sid = btn.dataset.sid;
+  const textEl = document.getElementById('st-' + sid);
+  if (!textEl) return;
+  const text = textEl.textContent;
+
+  function onSuccess() {
+    btn.classList.add('copied');
+    btn.querySelector('.copy-icon').textContent = '✓';
+    btn.childNodes[btn.childNodes.length - 1].textContent = ' Copied!';
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.querySelector('.copy-icon').textContent = '⎘';
+      btn.childNodes[btn.childNodes.length - 1].textContent = ' Copy text';
+    }, 2000);
+  }
+
+  function fallbackCopy() {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      const ok = document.execCommand('copy');
+      if (ok) { onSuccess(); } else { showToast('Could not copy — try long-pressing the text'); }
+    } catch {
+      showToast('Could not copy — try long-pressing the text');
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(onSuccess).catch(fallbackCopy);
+  } else {
+    fallbackCopy();
+  }
+}
+
+async function uploadSlip(input) {
+  // Local (Mac) only — Upload Slip button is hidden in GitHub mode
+  const sid = input.dataset.sid;
+  if (!input.files || !input.files[0]) return;
+  const confirmBtn = document.querySelector(`.btn-confirm[data-sid="${sid}"]`);
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Uploading…'; }
+  try {
+    const fd = new FormData();
+    fd.append('settlement_id', sid);
+    fd.append('method', 'slip');
+    fd.append('slip', input.files[0]);
+    const res = await fetch('/api/roong/confirm', {method:'POST', body:fd});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    await onConfirmed(data);
+  } catch(e) {
+    showToast('Upload failed: ' + e.message);
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Mark received'; }
+  }
+}
+
+async function confirmManual(btn) {
+  const sid = btn.dataset.sid;
+  btn.disabled = true;
+  btn.textContent = 'Confirming…';
+  try {
+    const data = await DataSource.confirmRoong(sid);
+    await onConfirmed(data);
+  } catch(e) {
+    showToast('Error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '✓ Mark received';
+  }
+}
+
+async function cancelBatch(btn) {
+  const sid = btn.dataset.sid;
+  if (!confirm(`Cancel settlement ${sid}? The expenses will return to the unsettled list.`)) return;
+  btn.disabled = true;
+  btn.textContent = 'Cancelling…';
+  try {
+    await DataSource.cancelRoong(sid);
+    lastConfirmed = null;
+    const [u, p] = await Promise.all([
+      DataSource.loadRoongUnsettled(),
+      DataSource.loadRoongPending(),
+    ]);
+    unsettled = u.map(r => ({...r, _pct:50, _share:parseFloat(r.Amount||0)*0.5, _checked:true}));
+    pendingBatches = p;
+    render();
+    showToast(`${sid} cancelled — expenses returned to unsettled`);
+  } catch(e) {
+    showToast('Error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '✕ Cancel';
+  }
+}
+
+async function onConfirmed(data) {
+  const batch = pendingBatches.find(b => b.settlement_id === data.settlement_id);
+  const n = batch ? (batch.expense_rows || []).length : '?';
+  // In GitHub mode confirmed_at + requested_amount may not come back in data —
+  // fall back to what we already have in the pending batch record.
+  lastConfirmed = {
+    settlement_id:    data.settlement_id,
+    requested_amount: data.requested_amount || (batch && batch.requested_amount) || '',
+    confirmed_at:     data.confirmed_at || '',
+    n,
+  };
+  const [u, p] = await Promise.all([
+    DataSource.loadRoongUnsettled(),
+    DataSource.loadRoongPending(),
+  ]);
+  unsettled = u.map(r => ({...r, _pct:50, _share:parseFloat(r.Amount||0)*0.5, _checked:true}));
+  pendingBatches = p;
+  render();
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+// ---------------------------------------------------------------------------
+// History (loaded separately, injected into placeholder)
+// ---------------------------------------------------------------------------
+async function loadHistory() {
+  try {
+    const history = await DataSource.loadRoongHistory();
+    const el = document.getElementById('history-content');
+    if (!el) return;
+    if (!history.length) {
+      el.innerHTML = `<div class="empty">No settled batches yet</div>`;
+      return;
+    }
+    let html = '';
+    for (const batch of history) {
+      const expRows = batch.expense_rows || [];
+      const n = expRows.length;
+      html += `
+      <div class="hist-row" onclick="this.classList.toggle('open')">
+        <div class="hist-header">
+          <div class="hist-left">
+            <div class="hist-id">${escHtml(batch.settlement_id)}</div>
+            <div class="hist-amount">${fmtBaht(batch.requested_amount)}</div>
+            <div class="hist-date">${fmtDateShort((batch.created_at||'').substring(0,10))} · ${n} expense${n===1?'':'s'}</div>
+          </div>
+          <div class="hist-right">
+            <span class="hist-badge">settled</span>
+            <span class="hist-chev">▶</span>
+          </div>
+        </div>
+        <div class="hist-entries">
+          ${expRows.length ? expRows.sort((a,b)=>(a.Date||'')<(b.Date||'')?-1:1).map(r => `
+          <div class="hist-entry">
+            <div class="he-date">${fmtDateShort(r.Date)}</div>
+            <div class="he-desc">${escHtml(r.Description||'')}</div>
+            <div class="he-share">${fmtBaht(r.roong_share)}</div>
+          </div>`).join('') : '<div class="hist-entry" style="grid-column:1/-1;color:var(--text-faint);">No rows</div>'}
+        </div>
+      </div>`;
+    }
+    el.innerHTML = html;
+  } catch(e) {
+    const el = document.getElementById('history-content');
+    if (el) el.innerHTML = `<div class="empty">Could not load history</div>`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Utils
+// ---------------------------------------------------------------------------
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+loadAll();
+</script>
+</body>
+</html>
