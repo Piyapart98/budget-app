@@ -199,6 +199,12 @@ function showToast(msg, ms = 2500) {
   toastTimer = setTimeout(() => el.classList.remove('show'), ms);
 }
 
+function mapUnsettled(rows) {
+  return rows
+    .map(r => ({...r, _pct: 50, _share: parseFloat(r.Amount || 0) * 0.5, _checked: true}))
+    .sort((a, b) => (a.Date || '') < (b.Date || '') ? -1 : (a.Date || '') > (b.Date || '') ? 1 : 0);
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -215,12 +221,7 @@ async function loadAll() {
       DataSource.loadRoongUnsettled(),
       DataSource.loadRoongPending(),
     ]);
-    unsettled = u.map(r => ({
-      ...r,
-      _pct: 50,
-      _share: parseFloat(r.Amount || 0) * 0.5,
-      _checked: true,
-    }));
+    unsettled = mapUnsettled(u);
     pendingBatches = p;
     render();
   } catch (e) {
@@ -454,7 +455,7 @@ async function sendRequest() {
       DataSource.loadRoongUnsettled(),
       DataSource.loadRoongPending(),
     ]);
-    unsettled = u.map(r => ({...r, _pct:50, _share:parseFloat(r.Amount||0)*0.5, _checked:true}));
+    unsettled = mapUnsettled(u);
     pendingBatches = p;
     render();
     const pending = document.querySelector('.batch-card');
@@ -554,7 +555,7 @@ async function cancelBatch(btn) {
       DataSource.loadRoongUnsettled(),
       DataSource.loadRoongPending(),
     ]);
-    unsettled = u.map(r => ({...r, _pct:50, _share:parseFloat(r.Amount||0)*0.5, _checked:true}));
+    unsettled = mapUnsettled(u);
     pendingBatches = p;
     render();
     showToast(`${sid} cancelled — expenses returned to unsettled`);
