@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verify Statements</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f4f4f1;color:#222;min-height:100vh}
+a{color:inherit;text-decoration:none}
+
+/* Top bar */
+.topbar{background:#fff;border-bottom:0.5px solid #e0e0d8;position:sticky;top:0;z-index:100}
+.topbar-inner{max-width:520px;margin:0 auto;padding:0 16px}
+.topbar-head{display:flex;align-items:center;gap:10px;padding:12px 0 10px}
+.home-link{font-size:13px;color:#888;display:flex;align-items:center;gap:4px}
+.home-link svg{width:14px;height:14px;stroke:#888;fill:none;stroke-width:2}
+.topbar-title{font-size:17px;font-weight:500;flex:1}
+.tabs{display:flex;border-top:0.5px solid #e0e0d8}
+.tab{flex:1;text-align:center;padding:10px 4px;font-size:13px;font-weight:500;color:#888;border-bottom:2.5px solid transparent;cursor:pointer;transition:color .15s}
+.tab.active{color:#222;border-bottom-color:#222}
+.tab-inner{display:inline-flex;align-items:center;gap:5px}
+.pill{font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;line-height:1.6}
+.pill-red{background:#fcebeb;color:#a32d2d}
+.pill-amber{background:#faeeda;color:#854f0b}
+.pill-gray{background:#ebebeb;color:#666}
+
+/* Content */
+.content{max-width:520px;margin:0 auto;padding:14px 14px 40px}
+
+/* Loading / error / mac-only states */
+.state-msg{text-align:center;padding:48px 20px;color:#888;font-size:14px}
+.state-msg strong{display:block;font-size:16px;color:#222;font-weight:500;margin-bottom:8px}
+
+/* Summary card */
+.summary-card{background:#fff;border:0.5px solid #e0e0d8;border-radius:12px;padding:13px 15px;margin-bottom:12px}
+.summary-row{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
+.summary-label{color:#888}
+.summary-val{font-weight:500}
+.summary-val.muted{color:#888;font-weight:400}
+.summary-divider{border:none;border-top:0.5px solid #e0e0d8;margin:8px 0}
+
+/* Section headers */
+.section-label{font-size:12px;font-weight:600;color:#888;letter-spacing:.4px;text-transform:uppercase;padding:4px 0 8px;display:flex;align-items:center;gap:7px}
+
+/* Row cards */
+.row-card{background:#fff;border:0.5px solid #e0e0d8;border-radius:12px;padding:12px 14px;margin-bottom:8px}
+.row-card.expanded{border-color:#bbb}
+.row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.row-merchant{font-size:13px;color:#888;flex:1;line-height:1.4}
+.row-amount{font-size:15px;font-weight:500;white-space:nowrap;flex-shrink:0}
+.row-meta{font-size:12px;color:#888;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.row-actions{display:flex;gap:8px;margin-top:10px}
+.btn{font-size:13px;font-weight:500;padding:7px 16px;border-radius:8px;border:0.5px solid #ccc;background:#fff;color:#222;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.btn:active{opacity:.7}
+.btn.primary{border-color:#999}
+.btn.danger{color:#a32d2d;border-color:#f7c1c1}
+.btn.muted{color:#888}
+
+/* Expand form */
+.expand-form{margin-top:10px;border-top:0.5px solid #e8e8e2;padding-top:10px;display:flex;flex-direction:column;gap:9px}
+.form-field{display:flex;flex-direction:column;gap:4px}
+.form-label{font-size:12px;color:#888}
+.form-row-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+input[type=text],input[type=date],select{width:100%;font-size:14px;padding:8px 10px;border:0.5px solid #ccc;border-radius:8px;background:#fff;color:#222;font-family:inherit;-webkit-appearance:none;appearance:none}
+input[readonly]{background:#f4f4f1;color:#888}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23888' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px}
+.btn-row{display:flex;gap:8px;margin-top:2px}
+.btn-row .btn{flex:1;text-align:center}
+
+/* Not on statement */
+.nos-card{background:#fff;border:0.5px solid #e0e0d8;border-radius:12px;padding:12px 14px;margin-bottom:8px}
+.nos-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.nos-desc{font-size:13px;font-weight:500;flex:1;line-height:1.4}
+.nos-amount{font-size:15px;font-weight:500;white-space:nowrap;flex-shrink:0}
+.nos-meta{font-size:12px;color:#888;display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.nos-actions{display:flex;gap:8px;margin-top:10px}
+
+/* Delete reason input */
+.reason-row{display:flex;gap:6px;margin-top:8px;align-items:center}
+.reason-row input{flex:1;font-size:13px;padding:7px 10px;border:0.5px solid #ccc;border-radius:8px;background:#fff;color:#222;font-family:inherit}
+.reason-row .btn{flex-shrink:0;padding:7px 12px}
+
+/* Collapsible sections */
+.collapsible{margin-bottom:8px}
+.coll-header{background:#fff;border:0.5px solid #e0e0d8;border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-size:13px;font-weight:500;-webkit-tap-highlight-color:transparent}
+.coll-header.open{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-color:#f0f0ea}
+.coll-chevron{transition:transform .2s;color:#888}
+.coll-chevron.open{transform:rotate(180deg)}
+.coll-body{background:#fff;border:0.5px solid #e0e0d8;border-top:none;border-bottom-left-radius:12px;border-bottom-right-radius:12px;padding:4px 14px 10px;display:none}
+.coll-body.open{display:block}
+
+/* Matched rows */
+.matched-item{padding:10px 0;border-bottom:0.5px solid #f0f0ea;display:flex;flex-direction:column;gap:5px}
+.matched-item:last-child{border-bottom:none}
+.matched-badges{display:flex;justify-content:space-between;align-items:center}
+.conf-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}
+.conf-high{background:#eaf3de;color:#3b6d11}
+.conf-low{background:#faeeda;color:#854f0b}
+.matched-pair{display:flex;gap:8px;align-items:flex-start;margin-top:2px}
+.matched-side{flex:1;min-width:0}
+.matched-side .ms-desc{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.matched-side .ms-meta{font-size:12px;color:#888;margin-top:1px}
+.matched-arrow{color:#bbb;font-size:16px;padding-top:2px;flex-shrink:0}
+
+/* Payment rows */
+.payment-item{display:flex;justify-content:space-between;font-size:13px;padding:7px 0;border-bottom:0.5px solid #f0f0ea;color:#888}
+.payment-item:last-child{border-bottom:none}
+
+/* Empty state */
+.empty-note{font-size:13px;color:#aaa;padding:2px 0 10px}
+
+/* Toast */
+.toast{position:fixed;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);left:50%;transform:translateX(-50%);background:#1a1a18;color:#f5f4f0;font-size:13px;padding:9px 18px;border-radius:999px;z-index:999;opacity:0;transition:opacity .2s;white-space:nowrap;pointer-events:none}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="topbar-head">
+      <a href="./" class="home-link">
+        <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+        Home
+      </a>
+      <span class="topbar-title">Verify statements</span>
+    </div>
+    <div class="tabs" id="tab-bar">
+      <!-- filled by JS -->
+    </div>
+  </div>
+</div>
+
+<div class="content" id="content">
+  <div class="state-msg" id="loading-msg"><strong>Loading…</strong>Fetching statement data</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="data-source.js"></script>
+<script>
+(function () {
+'use strict';
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+var allCards = [];      // array of verify() result objects, one per card
+var activeIdx = 0;      // which tab is selected
+var CATS = [];          // spending categories from goals.json
+var INCOME_CATS = [];   // income categories (excluded from dropdown)
+
+// Per-row UI state for "missing in db" expand form
+// key = tx_id (card_last4 + '_' + index), value = { expanded, values, submitting, done, skipped }
+var missingState = {};
+
+// Per-row UI state for "not on statement" delete flow
+// key = RefID, value = { deleteOpen, reasonValue, submitting, doneOk }
+var nosState = {};
+
+// Per-row UI state for low-confidence matched rows ("Add to DB anyway")
+// key = card_last4 + '_m_' + idx
+var lowMatchState = {};
+
+// Collapsible open state
+var collOpen = { matched: false, payments: false };
+
+// Cards whose statement PDF has been archived this session.
+// key = card_last4, value = true
+var archivedCards = {};
+
+// Snapshot freshness — set in GitHub mode from verify.json's generated_at.
+var snapshotAt = null;
+
+// GitHub mode: the phone can't parse PDFs, so it reads a verify.json snapshot
+// the Mac writes on each run (via DataSource.loadVerification). The page still
+// works — it just shows as-of-last-Mac-run data and hides the Archive action
+// (archiving moves a local PDF, which only the Mac can do).
+var IS_GH = !!(window.DataSource && window.DataSource.isGithub());
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+async function boot() {
+  try {
+    // Load goals for category list + income filter
+    var goals = await DataSource.loadGoals();
+    INCOME_CATS = [];
+    try {
+      var cfg = await DataSource.loadConfig();
+      INCOME_CATS = cfg.income_categories || [];
+    } catch (e) { /* ignore */ }
+    var allCats = goals.categories ? Object.keys(goals.categories) : [];
+    CATS = allCats.filter(function (c) { return INCOME_CATS.indexOf(c) === -1; });
+
+    // Fetch verify data for all cards. Local mode parses PDFs live; GitHub
+    // mode reads the verify.json snapshot the Mac wrote on its last run.
+    var data = await DataSource.loadVerification();
+    allCards = data.cards || [data];
+    snapshotAt = data.generated_at || null;
+
+    if (IS_GH && allCards.length === 0) {
+      document.getElementById('loading-msg').innerHTML =
+        '<strong>No statements yet</strong>Nothing to verify. Run the pipeline ' +
+        'on your Mac with a statement PDF in the inbox, then reload here.';
+      return;
+    }
+
+    // Default to first card with missing rows, else first card
+    activeIdx = 0;
+    for (var i = 0; i < allCards.length; i++) {
+      if (allCards[i].summary.missing_in_db > 0 || allCards[i].summary.not_on_statement > 0) {
+        activeIdx = i;
+        break;
+      }
+    }
+
+    renderTabs();
+    renderContent();
+  } catch (e) {
+    document.getElementById('loading-msg').innerHTML =
+      '<strong>Error</strong>' + escHtml(e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+function renderTabs() {
+  var bar = document.getElementById('tab-bar');
+  bar.innerHTML = '';
+  allCards.forEach(function (card, i) {
+    var s = card.summary;
+    var archived = archivedCards[card.card_last4];
+    var issues = s.missing_in_db + s.not_on_statement;
+    var pillCls = issues > 5 ? 'pill pill-red' : issues > 0 ? 'pill pill-amber' : 'pill pill-gray';
+    var pillHtml = archived
+      ? '<span class="pill pill-gray">✓</span>'
+      : '<span class="' + pillCls + '">' + issues + '</span>';
+    var tab = document.createElement('div');
+    tab.className = 'tab' + (i === activeIdx ? ' active' : '');
+    tab.innerHTML = '<span class="tab-inner">' +
+      escHtml(card.issuer) +
+      pillHtml +
+      '</span>';
+    tab.addEventListener('click', function () {
+      activeIdx = i;
+      collOpen = { matched: false, payments: false };
+      renderTabs();
+      renderContent();
+    });
+    bar.appendChild(tab);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Main render
+// ---------------------------------------------------------------------------
+function renderContent() {
+  var card = allCards[activeIdx];
+  var s = card.summary;
+
+  // Already archived this session — statement PDF has left the inbox.
+  if (archivedCards[card.card_last4]) {
+    document.getElementById('content').innerHTML =
+      '<div class="state-msg"><strong>✓ ' + escHtml(card.issuer) + ' statement archived</strong>' +
+      'Moved out of the inbox to 02_archive/statements/. Next month’s run will only see the new statement.</div>';
+    return;
+  }
+
+  var html = '';
+
+  // GitHub mode: this is a snapshot from the last Mac run, not live. Make that
+  // clear and note that buckets won't recompute on the phone after edits.
+  if (IS_GH) {
+    var asOf = snapshotAt ? fmtSnapshot(snapshotAt) : 'unknown';
+    html += '<div class="state-msg" style="margin-bottom:12px;font-size:13px">' +
+      'Snapshot from your Mac · as of ' + escHtml(asOf) +
+      '<br><span style="color:#888">Adds &amp; deletes save to your database, but the ' +
+      'match list refreshes only on the next Mac run.</span></div>';
+  }
+
+  // Summary bar
+  var pStart = fmtDate(card.period_start);
+  var pEnd   = fmtDate(card.period_end);
+  html += '<div class="summary-card">';
+  html += sumRow('Period', pStart + ' – ' + pEnd);
+  html += sumRow('Statement total', '฿' + fmtAmt(card.statement_total));
+  html += '<hr class="summary-divider">';
+  html += sumRow('Matched in DB', s.matched + ' of ' + s.stmt_charges + ' charges');
+  html += sumRow('DB amount matched', '฿' + fmtAmt(s.db_match_total));
+  if (s.stmt_payments > 0)
+    html += sumRow('Payments excluded', s.stmt_payments + ' row' + (s.stmt_payments > 1 ? 's' : ''), true);
+  html += '</div>';
+
+  // Missing in DB
+  var missing = card.missing_in_db || [];
+  html += '<div class="section-label">Missing in DB ' +
+    '<span class="pill ' + (missing.length > 0 ? 'pill-red' : 'pill-gray') + '">' + missing.length + '</span></div>';
+
+  if (missing.length === 0) {
+    html += '<p class="empty-note">All statement charges are in your database.</p>';
+  } else {
+    missing.forEach(function (tx, idx) {
+      html += renderMissingCard(card, tx, idx);
+    });
+  }
+
+  // Not on statement
+  var nos = card.not_on_statement || [];
+  html += '<div class="section-label" style="margin-top:6px">Not on statement ' +
+    '<span class="pill ' + (nos.length > 0 ? 'pill-amber' : 'pill-gray') + '">' + nos.length + '</span></div>';
+
+  if (nos.length === 0) {
+    html += '<p class="empty-note">All ' + escHtml(card.issuer) + ' rows matched or accounted for.</p>';
+  } else {
+    nos.forEach(function (row) {
+      html += renderNosCard(card, row);
+    });
+  }
+
+  // Matched (collapsible)
+  var matched = card.matched || [];
+  html += renderCollapsible('matched',
+    'Matched <span style="color:#888;font-weight:400">' + matched.length + ' rows</span>',
+    renderMatchedBody(matched, card)
+  );
+
+  // Payment rows (collapsible)
+  var payments = card.payment_rows || [];
+  if (payments.length > 0) {
+    html += renderCollapsible('payments',
+      'Payment rows <span style="color:#888;font-weight:400">excluded</span>',
+      renderPaymentsBody(payments)
+    );
+  }
+
+  // Archive footer — end-of-workflow action. Moves the PDF out of the inbox
+  // so next month's run only sees the new statement. Mac-only: archiving moves
+  // a local PDF, which the phone (GitHub mode) can't do — hide it there.
+  if (!IS_GH) {
+    html += '<div style="margin-top:18px">';
+    html += '<button class="btn" style="width:100%;text-align:center" data-action="archive-statement">' +
+      'Archive statement — move out of inbox</button>';
+    html += '</div>';
+  }
+
+  document.getElementById('content').innerHTML = html;
+  attachEvents(card);
+}
+
+function sumRow(label, val, muted) {
+  return '<div class="summary-row"><span class="summary-label">' + escHtml(label) +
+    '</span><span class="summary-val' + (muted ? ' muted' : '') + '">' + val + '</span></div>';
+}
+
+// ---------------------------------------------------------------------------
+// Missing-in-DB card
+// ---------------------------------------------------------------------------
+function txId(card, idx) { return card.card_last4 + '_' + idx; }
+
+function renderMissingCard(card, tx, idx) {
+  var id = txId(card, idx);
+  var st = missingState[id];
+  if (!st) {
+    missingState[id] = {
+      expanded: false, submitting: false, done: false, skipped: false,
+      desc: tx.merchant || '',
+      date: tx.date || '',
+      cat: tx.predicted_category || (CATS[0] || ''),
+      note: card.issuer,
+    };
+    st = missingState[id];
+  }
+  if (st.done) {
+    return '<div class="row-card" style="opacity:.5">' +
+      '<div class="row-top"><div class="row-merchant">' + escHtml(tx.merchant) + '</div>' +
+      '<div class="row-amount">฿' + fmtAmt(tx.amount) + '</div></div>' +
+      '<div class="row-meta">' + escHtml(fmtDate(tx.date)) + ' · Added ✓</div></div>';
+  }
+  if (st.skipped) {
+    return '<div class="row-card" style="opacity:.4">' +
+      '<div class="row-top"><div class="row-merchant">' + escHtml(tx.merchant) + '</div>' +
+      '<div class="row-amount">฿' + fmtAmt(tx.amount) + '</div></div>' +
+      '<div class="row-meta">' + escHtml(fmtDate(tx.date)) + ' · Skipped</div></div>';
+  }
+
+  var html = '<div class="row-card' + (st.expanded ? ' expanded' : '') + '" data-missing-id="' + escAttr(id) + '">';
+  html += '<div class="row-top">';
+  html += '<div class="row-merchant">' + escHtml(tx.merchant) + '</div>';
+  html += '<div class="row-amount">฿' + fmtAmt(tx.amount) + '</div>';
+  html += '</div>';
+  html += '<div class="row-meta">' + escHtml(fmtDate(tx.date)) + ' · ' + escHtml(card.issuer) + '</div>';
+
+  if (!st.expanded) {
+    html += '<div class="row-actions">';
+    html += '<button class="btn primary" data-action="expand-missing" data-id="' + escAttr(id) + '">+ Add to DB</button>';
+    html += '<button class="btn muted" data-action="skip-missing" data-id="' + escAttr(id) + '">Skip</button>';
+    html += '</div>';
+  } else {
+    html += '<div class="expand-form">';
+
+    // Description
+    html += '<div class="form-field">';
+    html += '<div class="form-label">Description</div>';
+    html += '<input type="text" data-field="desc" data-id="' + escAttr(id) + '" value="' + escAttr(st.desc) + '">';
+    html += '</div>';
+
+    // Date + Amount (read-only)
+    html += '<div class="form-row-2">';
+    html += '<div class="form-field"><div class="form-label">Date</div>';
+    html += '<input type="date" data-field="date" data-id="' + escAttr(id) + '" value="' + escAttr(st.date) + '"></div>';
+    html += '<div class="form-field"><div class="form-label">Amount</div>';
+    html += '<input type="text" value="฿' + fmtAmt(tx.amount) + '" readonly></div>';
+    html += '</div>';
+
+    // Category
+    html += '<div class="form-field">';
+    html += '<div class="form-label">Category</div>';
+    html += '<select data-field="cat" data-id="' + escAttr(id) + '">';
+    CATS.forEach(function (c) {
+      html += '<option value="' + escAttr(c) + '"' + (c === st.cat ? ' selected' : '') + '>' + escHtml(c) + '</option>';
+    });
+    html += '</select></div>';
+
+    // Note
+    html += '<div class="form-field">';
+    html += '<div class="form-label">Note</div>';
+    html += '<input type="text" data-field="note" data-id="' + escAttr(id) + '" value="' + escAttr(st.note) + '">';
+    html += '</div>';
+
+    html += '<div class="btn-row">';
+    html += '<button class="btn primary" data-action="confirm-missing" data-id="' + escAttr(id) + '" data-amount="' + tx.amount + '"' + (st.submitting ? ' disabled' : '') + '>';
+    html += st.submitting ? 'Saving…' : 'Confirm';
+    html += '</button>';
+    html += '<button class="btn muted" data-action="cancel-missing" data-id="' + escAttr(id) + '">Cancel</button>';
+    html += '</div>';
+    html += '</div>'; // expand-form
+  }
+
+  html += '</div>'; // row-card
+  return html;
+}
+
+// ---------------------------------------------------------------------------
+// Not-on-statement card
+// ---------------------------------------------------------------------------
+function renderNosCard(card, row) {
+  var ref = row.RefID;
+  var st = nosState[ref];
+  if (!st) {
+    nosState[ref] = { deleteOpen: false, reasonValue: '', submitting: false, doneOk: false, doneDel: false };
+    st = nosState[ref];
+  }
+
+  if (st.doneOk) {
+    return '<div class="nos-card" style="opacity:.5">' +
+      '<div class="nos-top"><div class="nos-desc">' + escHtml(row.Description) + '</div>' +
+      '<div class="nos-amount">฿' + fmtAmt(row.Amount) + '</div></div>' +
+      '<div class="nos-meta">Marked OK ✓</div></div>';
+  }
+  if (st.doneDel) {
+    return '<div class="nos-card" style="opacity:.5">' +
+      '<div class="nos-top"><div class="nos-desc">' + escHtml(row.Description) + '</div>' +
+      '<div class="nos-amount">฿' + fmtAmt(row.Amount) + '</div></div>' +
+      '<div class="nos-meta">Deleted ✓</div></div>';
+  }
+
+  var html = '<div class="nos-card">';
+  html += '<div class="nos-top">';
+  html += '<div class="nos-desc">' + escHtml(row.Description) + '</div>';
+  html += '<div class="nos-amount">฿' + fmtAmt(row.Amount) + '</div>';
+  html += '</div>';
+  html += '<div class="nos-meta">' + escHtml(fmtDate(row.Date)) + ' · ' + escHtml(row.Category) + ' · ' + escHtml(row.Note || '') + '</div>';
+  html += '<div class="nos-actions">';
+  html += '<button class="btn" data-action="nos-ok" data-ref="' + escAttr(ref) + '">Mark as OK</button>';
+  html += '<button class="btn danger" data-action="nos-delete-open" data-ref="' + escAttr(ref) + '"' + (st.deleteOpen ? ' style="display:none"' : '') + '>Delete</button>';
+  html += '</div>';
+
+  if (st.deleteOpen) {
+    html += '<div class="reason-row">';
+    html += '<input type="text" placeholder="Reason for deleting…" data-ref="' + escAttr(ref) + '" data-action="nos-reason" value="' + escAttr(st.reasonValue) + '">';
+    html += '<button class="btn danger" data-action="nos-delete-confirm" data-ref="' + escAttr(ref) + '"' + (st.submitting ? ' disabled' : '') + '>' + (st.submitting ? '…' : 'Delete') + '</button>';
+    html += '<button class="btn muted" data-action="nos-delete-cancel" data-ref="' + escAttr(ref) + '">✕</button>';
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+// ---------------------------------------------------------------------------
+// Matched rows (collapsible body)
+// ---------------------------------------------------------------------------
+function renderMatchedBody(matched, card) {
+  if (!matched.length) return '<p class="empty-note">None.</p>';
+  var html = '';
+  matched.forEach(function (m, idx) {
+    var st = m.statement; var db = m.db;
+    var confCls = m.confidence === 'high' ? 'conf-high' : 'conf-low';
+    var id = card.card_last4 + '_m_' + idx;
+
+    // Init state lazily
+    if (!lowMatchState[id]) {
+      lowMatchState[id] = {
+        expanded: false, submitting: false, done: false,
+        desc: st.merchant || '', date: st.date, cat: CATS[0] || '', note: card.issuer,
+      };
+    }
+    var lst = lowMatchState[id];
+
+    html += '<div class="matched-item">';
+    html += '<div class="matched-badges">';
+    html += '<span class="conf-badge ' + confCls + '">' + m.confidence + ' confidence</span>';
+    html += '<span style="font-size:12px;color:#888">฿' + fmtAmt(st.amount) + '</span>';
+    html += '</div>';
+    html += '<div class="matched-pair">';
+    html += '<div class="matched-side">';
+    html += '<div class="ms-desc">' + escHtml(st.merchant || '') + '</div>';
+    html += '<div class="ms-meta">' + escHtml(fmtDate(st.date)) + ' · statement</div>';
+    html += '</div>';
+    html += '<div class="matched-arrow">↔</div>';
+    html += '<div class="matched-side">';
+    html += '<div class="ms-desc">' + escHtml(db.Description || '') + '</div>';
+    html += '<div class="ms-meta">' + escHtml(fmtDate(db.Date)) + ' · Δ' + m.date_diff_days + 'd</div>';
+    html += '</div>';
+    html += '</div>';
+
+    // Low-confidence: offer to add statement row to DB
+    if (m.confidence === 'low') {
+      if (lst.done) {
+        html += '<p style="font-size:12px;color:#3b6d11;margin:6px 0 2px">✓ Added to DB</p>';
+      } else if (!lst.expanded) {
+        html += '<button class="btn" style="margin-top:8px;font-size:12px" ' +
+          'data-action="low-add-expand" data-id="' + escAttr(id) + '">Add to DB anyway</button>';
+      } else {
+        // Inline add form
+        html += '<div class="expand-form" style="margin-top:8px">';
+        html += '<div class="ef-row"><label class="ef-label">Description</label>';
+        html += '<input class="ef-input" type="text" data-field="desc" data-id="' + escAttr(id) + '" value="' + escAttr(lst.desc) + '"></div>';
+        html += '<div class="ef-row ef-2col">';
+        html += '<div><label class="ef-label">Date</label>';
+        html += '<input class="ef-input" type="date" data-field="date" data-id="' + escAttr(id) + '" value="' + escAttr(lst.date || '') + '"></div>';
+        html += '<div><label class="ef-label">Amount</label>';
+        html += '<input class="ef-input" value="฿' + fmtAmt(st.amount) + '" disabled></div>';
+        html += '</div>';
+        html += '<div class="ef-row"><label class="ef-label">Category</label>';
+        html += '<select class="ef-input" data-field="cat" data-id="' + escAttr(id) + '">';
+        CATS.forEach(function (c) {
+          html += '<option value="' + escAttr(c) + '"' + (c === lst.cat ? ' selected' : '') + '>' + escHtml(c) + '</option>';
+        });
+        html += '</select></div>';
+        html += '<div class="ef-row"><label class="ef-label">Note (card)</label>';
+        html += '<input class="ef-input" type="text" data-field="note" data-id="' + escAttr(id) + '" value="' + escAttr(lst.note || '') + '"></div>';
+        html += '<div class="ef-actions">';
+        html += '<button class="btn primary" data-action="low-add-confirm" data-id="' + escAttr(id) + '" data-amount="' + st.amount + '"' + (lst.submitting ? ' disabled' : '') + '>';
+        html += lst.submitting ? 'Saving…' : 'Confirm';
+        html += '</button>';
+        html += '<button class="btn" data-action="low-add-cancel" data-id="' + escAttr(id) + '">Cancel</button>';
+        html += '</div></div>';
+      }
+    }
+
+    html += '</div>';
+  });
+  return html;
+}
+
+function renderPaymentsBody(payments) {
+  var html = '';
+  payments.forEach(function (t) {
+    html += '<div class="payment-item"><span>' + escHtml(fmtDate(t.date)) + ' · ' + escHtml(t.merchant || '') + '</span>';
+    html += '<span>฿' + fmtAmt(Math.abs(t.amount)) + '</span></div>';
+  });
+  return html;
+}
+
+function renderCollapsible(key, labelHtml, bodyHtml) {
+  var open = collOpen[key];
+  return '<div class="collapsible">' +
+    '<div class="coll-header' + (open ? ' open' : '') + '" data-coll="' + key + '">' +
+    '<span>' + labelHtml + '</span>' +
+    '<span class="coll-chevron' + (open ? ' open' : '') + '">▾</span>' +
+    '</div>' +
+    '<div class="coll-body' + (open ? ' open' : '') + '" id="coll-body-' + key + '">' +
+    bodyHtml +
+    '</div></div>';
+}
+
+// ---------------------------------------------------------------------------
+// Event delegation
+// ---------------------------------------------------------------------------
+function attachEvents(card) {
+  var content = document.getElementById('content');
+
+  content.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-action]');
+    var coll = e.target.closest('[data-coll]');
+
+    if (coll) {
+      var key = coll.getAttribute('data-coll');
+      collOpen[key] = !collOpen[key];
+      renderContent();
+      return;
+    }
+
+    if (!btn) return;
+    var action = btn.getAttribute('data-action');
+    var id = btn.getAttribute('data-id');
+    var ref = btn.getAttribute('data-ref');
+
+    if (action === 'expand-missing') {
+      missingState[id].expanded = true;
+      renderContent();
+    } else if (action === 'cancel-missing') {
+      missingState[id].expanded = false;
+      renderContent();
+    } else if (action === 'skip-missing') {
+      missingState[id].skipped = true;
+      renderContent();
+    } else if (action === 'confirm-missing') {
+      confirmMissing(id, parseFloat(btn.getAttribute('data-amount')));
+    } else if (action === 'nos-ok') {
+      nosState[ref].doneOk = true;
+      renderContent();
+      toast('Marked as OK');
+    } else if (action === 'nos-delete-open') {
+      nosState[ref].deleteOpen = true;
+      renderContent();
+    } else if (action === 'nos-delete-cancel') {
+      nosState[ref].deleteOpen = false;
+      renderContent();
+    } else if (action === 'nos-delete-confirm') {
+      deleteNos(ref);
+    } else if (action === 'low-add-expand') {
+      if (lowMatchState[id]) { lowMatchState[id].expanded = true; renderContent(); }
+    } else if (action === 'low-add-cancel') {
+      if (lowMatchState[id]) { lowMatchState[id].expanded = false; renderContent(); }
+    } else if (action === 'low-add-confirm') {
+      confirmLowMatch(id, parseFloat(btn.getAttribute('data-amount')));
+    } else if (action === 'archive-statement') {
+      archiveStatement(card);
+    }
+  });
+
+  // Live-sync input changes back to state so re-renders don't wipe edits
+  content.addEventListener('input', function (e) {
+    var el = e.target;
+    var field = el.getAttribute('data-field');
+    var id = el.getAttribute('data-id');
+    var action = el.getAttribute('data-action');
+    var ref = el.getAttribute('data-ref');
+
+    if (field && id && missingState[id]) {
+      missingState[id][field] = el.value;
+    }
+    if (field && id && lowMatchState[id]) {
+      lowMatchState[id][field] = el.value;
+    }
+    if (action === 'nos-reason' && ref && nosState[ref]) {
+      nosState[ref].reasonValue = el.value;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+async function confirmMissing(id, amount) {
+  var st = missingState[id];
+  if (st.submitting || st.done) return;   // guard against double-tap
+  if (!st.desc.trim()) { toast('Description is required'); return; }
+  if (!st.date)         { toast('Date is required'); return; }
+  st.submitting = true;
+  renderContent();
+
+  try {
+    await DataSource.submitEntry({
+      Date:        st.date,
+      Description: st.desc.trim(),
+      Amount:      String(Math.round(amount)),
+      Category:    st.cat,
+      Note:        st.note.trim(),
+    });
+    st.done = true;
+    st.submitting = false;
+    toast('Added to DB');
+    renderContent();
+  } catch (e) {
+    st.submitting = false;
+    toast('Error: ' + e.message);
+    renderContent();
+  }
+}
+
+async function confirmLowMatch(id, amount) {
+  var st = lowMatchState[id];
+  if (!st || st.submitting || st.done) return;  // double-tap guard
+  if (!st.desc.trim()) { toast('Description is required'); return; }
+  if (!st.date)         { toast('Date is required'); return; }
+  st.submitting = true;
+  renderContent();
+  try {
+    await DataSource.submitEntry({
+      Date:        st.date,
+      Description: st.desc.trim(),
+      Amount:      String(Math.round(amount)),
+      Category:    st.cat,
+      Note:        st.note.trim(),
+    });
+    st.done = true;
+    st.submitting = false;
+    toast('Added to DB');
+    renderContent();
+  } catch (e) {
+    st.submitting = false;
+    toast('Error: ' + e.message);
+    renderContent();
+  }
+}
+
+var archiving = false;
+async function archiveStatement(card) {
+  if (archiving) return;   // guard against double-tap
+  var s = card.summary;
+  var issues = s.missing_in_db + s.not_on_statement;
+  var msg = issues > 0
+    ? 'This ' + card.issuer + ' statement still has ' + issues + ' unresolved issue(s). Archive anyway? It will move out of the inbox.'
+    : 'Archive this ' + card.issuer + ' statement? It will move out of the inbox.';
+  if (!confirm(msg)) return;
+  archiving = true;
+  try {
+    await DataSource.archiveStatement(card.card_last4);
+    archivedCards[card.card_last4] = true;
+    archiving = false;
+    toast('Statement archived');
+    renderTabs();
+    renderContent();
+  } catch (e) {
+    archiving = false;
+    toast('Error: ' + e.message);
+  }
+}
+
+async function deleteNos(ref) {
+  var st = nosState[ref];
+  var reason = (st.reasonValue || '').trim();
+  if (!reason) { toast('Reason is required'); return; }
+  st.submitting = true;
+  renderContent();
+
+  try {
+    await DataSource.submitDelete({ RefID: ref, Reason: reason });
+    st.doneDel = true;
+    st.submitting = false;
+    toast('Deleted');
+    renderContent();
+  } catch (e) {
+    st.submitting = false;
+    toast('Error: ' + e.message);
+    renderContent();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function fmtDate(s) {
+  if (!s) return '';
+  try {
+    var d = new Date(s + 'T00:00:00');
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch (e) { return s; }
+}
+
+function fmtAmt(n) {
+  var num = parseFloat(n) || 0;
+  return num % 1 === 0 ? num.toLocaleString() : num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Format the snapshot's generated_at (ISO, e.g. "2026-06-01T09:02:04") for the
+// freshness banner. Falls back to the raw string if it can't be parsed.
+function fmtSnapshot(iso) {
+  try {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString('en-GB', {
+      day: 'numeric', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch (e) { return iso; }
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) { return escHtml(s); }
+
+function toast(msg) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(function () { el.classList.remove('show'); }, 2200);
+}
+
+// ---------------------------------------------------------------------------
+// Go
+// ---------------------------------------------------------------------------
+boot();
+
+})();
+</script>
+</body>
+</html>

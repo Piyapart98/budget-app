@@ -318,6 +318,60 @@
     catch (e) { return { cards: [], extra_note_suggestions: [], income_categories: [] }; }
   }
 
+  // loadVerification — statement vs DB cross-check.
+  // Local mode: calls /api/verify (optional ?card=XXXX to scope to one card),
+  //   which parses the PDFs live.
+  // GitHub mode: the phone can't parse PDFs (no Flask, no files). Instead it
+  //   reads verify.json — a snapshot the Mac writes on every run. Same shape
+  //   as /api/verify. Buckets are as-of the last Mac run; the snapshot carries
+  //   a `generated_at` so the page can show how fresh it is.
+  async function loadVerification(card) {
+    if (MODE === 'local') {
+      var url = '/api/verify';
+      if (card) url += '?card=' + encodeURIComponent(card);
+      var res = await fetch(url);
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+      return data;
+    }
+    // GitHub mode — read the snapshot.
+    var got = await ghGet('verify.json');
+    var snap = { generated_at: null, cards: [] };
+    if (got.content) {
+      try { snap = JSON.parse(got.content); } catch (e) { snap = { generated_at: null, cards: [] }; }
+    }
+    var cards = snap.cards || [];
+    if (card) {
+      var hit = null;
+      for (var i = 0; i < cards.length; i++) {
+        if (cards[i].card_last4 === card) { hit = cards[i]; break; }
+      }
+      if (!hit) {
+        throw new Error('No statement snapshot for card *' + card +
+          '. Run the pipeline on your Mac to generate one.');
+      }
+      hit.generated_at = snap.generated_at;
+      return hit;
+    }
+    return { cards: cards, generated_at: snap.generated_at };
+  }
+
+  // archiveStatement — move a verified statement PDF out of the inbox into
+  // 02_archive/statements/. Mac-only (operates on local files).
+  async function archiveStatement(card) {
+    if (MODE !== 'local') {
+      throw new Error('mac-only');
+    }
+    var res = await fetch('/api/verify/archive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card: card }),
+    });
+    var data = await res.json().catch(function () { return {}; });
+    if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+    return data;
+  }
+
   async function submitEntry(payload) {
     if (MODE === 'local') {
       var res = await fetch('/api/entry', {
@@ -639,6 +693,8 @@
     loadChangelog:       loadChangelog,
     loadGoals:           loadGoals,
     loadConfig:          loadConfig,
+    loadVerification:    loadVerification,
+    archiveStatement:    archiveStatement,
     submitEntry:         submitEntry,
     submitEdit:          submitEdit,
     submitDelete:        submitDelete,
