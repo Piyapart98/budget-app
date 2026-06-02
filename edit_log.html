@@ -185,7 +185,7 @@ function rowToTx(r){
     amount:   r.Amount || '',
     category: r.Category || '',
     note:     r.Note || '',
-    source:   (r.RefID||'').toLowerCase()==='manual' ? 'manual' : 'slip',
+    source:   (r.RefID||'').toLowerCase().startsWith('manual') ? 'manual' : 'slip',
     deleted:  String(r.Deleted||'').toLowerCase()==='true',
     edited:   String(r.Edited||'').toLowerCase()==='yes',
   };
