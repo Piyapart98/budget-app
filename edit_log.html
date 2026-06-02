@@ -215,6 +215,8 @@ async function loadTx(){
   try{
     const rows=await DataSource.loadDatabase();
     transactions=rows.map(rowToTx);
+    // Newest transaction date on top (dates are YYYY-MM-DD, so string compare works).
+    transactions.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
     renderTx();
   }catch(e){
     showError('tx-list','Could not load database: '+e.message);
