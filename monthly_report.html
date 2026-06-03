@@ -67,10 +67,20 @@
   footer{margin-top:24px;border-top:1px solid var(--border);padding-top:12px;font-size:11px;color:var(--text-faint);font-family:var(--mono);line-height:1.7;}
   .home-btn{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted);text-decoration:none;font-family:var(--mono);padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);margin-bottom:8px;}
   .home-btn:hover{background:var(--surface);}
-  .income-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;}
+  .income-row{padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent;}
   .income-row:last-child{border-bottom:none;}
+  .income-row:active{background:#fafaf6;}
+  .income-header{display:flex;justify-content:space-between;align-items:center;}
   .income-row .cat{color:var(--text);}
-  .income-row .amt{font-family:var(--mono);color:var(--green);font-weight:500;}
+  .income-row .amt{font-family:var(--mono);color:var(--green);font-weight:500;display:flex;align-items:center;gap:6px;}
+  .income-chev{font-size:10px;color:var(--text-faint);transition:transform 0.15s ease;display:inline-block;line-height:1;}
+  .income-row.open .income-chev{transform:rotate(90deg);}
+  .income-entries{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);display:none;}
+  .income-row.open .income-entries{display:block;}
+  .income-entry{display:grid;grid-template-columns:48px 1fr 70px;gap:8px;font-size:11px;padding:5px 0;align-items:center;}
+  .income-entry .ed{font-family:var(--mono);color:var(--text-faint);}
+  .income-entry .en{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .income-entry .ea{font-family:var(--mono);color:var(--green);text-align:right;}
   .income-total{display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:4px;border-top:2px solid var(--border);font-size:13px;font-weight:500;}
   .income-total .amt{font-family:var(--mono);color:var(--green);}
   /* Month picker — arrows on the sides + tappable title in the middle.
@@ -447,13 +457,35 @@ async function initReport() {
     if (incomeTotal > 0) {
       incomeWrap.style.display  = 'block';
       incomeTitle.style.display = 'block';
+      // Tiny escaper for description text (slips can contain stray chars).
+      const escInc = (s) => String(s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
       const rows = Object.entries(incomeMap)
         .sort((a, b) => b[1] - a[1])
-        .map(([cat, amt]) =>
-          `<div class="income-row"><span class="cat">${cat}</span><span class="amt">+฿${amt.toLocaleString()}</span></div>`
-        ).join('');
+        .map(([cat, amt]) => {
+          // Per-category entries — chronological so the most recent reads last.
+          const entries = incomeRows
+            .filter(r => (r.Category || '') === cat)
+            .sort((a, b) => new Date(a.Date) - new Date(b.Date));
+          const entriesHtml = entries.map(r => {
+            const d = new Date(r.Date);
+            const dStr = isNaN(d) ? (r.Date || '') :
+              d.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
+            const desc = (r.Description || '').trim() || '(no description)';
+            const eamt = parseInt(r.Amount) || 0;
+            return `<div class="income-entry"><span class="ed">${escInc(dStr)}</span><span class="en">${escInc(desc)}</span><span class="ea">+฿${eamt.toLocaleString()}</span></div>`;
+          }).join('');
+          return `<div class="income-row">
+            <div class="income-header"><span class="cat">${escInc(cat)}</span><span class="amt">+฿${amt.toLocaleString()} <span class="income-chev">▶</span></span></div>
+            <div class="income-entries">${entriesHtml}</div>
+          </div>`;
+        }).join('');
       incomeRowsEl.innerHTML = rows +
         `<div class="income-total"><span>Total</span><span class="amt">+฿${incomeTotal.toLocaleString()}</span></div>`;
+      // Wire expand/collapse — same toggle pattern as the goal rows.
+      incomeRowsEl.querySelectorAll('.income-row').forEach(el =>
+        el.addEventListener('click', () => el.classList.toggle('open')));
     }
 
     // Goal rows — goals are spending-only; skip any goal that's accidentally
