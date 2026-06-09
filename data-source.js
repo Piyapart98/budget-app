@@ -679,6 +679,228 @@
   }
 
   // -------------------------------------------------------------------------
+  // Slip review (GitHub-native ingestion channel)
+  //
+  // The phone uploads slip images into budget-data/inbox/; a scheduled GitHub
+  // Action (ocr-inbox.yml) OCRs each new image into drafts.json. These three
+  // methods let the swipe review page (review.html) read those drafts, show the
+  // slip image, and commit decisions — mirroring the Mac /api/drafts +
+  // /api/review/submit flow so review.html is identical in both modes.
+  // -------------------------------------------------------------------------
+
+  // Binary-safe GET — ghGet() decodes content as UTF-8 text, which corrupts a
+  // JPEG/PNG. For images we keep the raw base64 the API returns.
+  async function ghGetRaw(path) {
+    var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
+              '/contents/' + encodeURIComponent(path) +
+              '?ref=' + encodeURIComponent(BRANCH) + '&_t=' + Date.now();
+    var res = await fetch(url, { headers: ghHeaders(), cache: 'no-store' });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('GitHub GET(raw) ' + path + ': ' + res.status);
+    var data = await res.json();
+    return { base64: (data.content || '').replace(/\s/g, ''), sha: data.sha };
+  }
+
+  // PUT raw base64 content (already-encoded bytes — do NOT re-encode).
+  async function ghPutRaw(path, base64, message) {
+    var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
+              '/contents/' + encodeURIComponent(path);
+    var res = await fetch(url, {
+      method: 'PUT',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, ghHeaders()),
+      body: JSON.stringify({ message: message, content: base64, branch: BRANCH }),
+    });
+    if (!res.ok) {
+      var d = await res.json().catch(function () { return {}; });
+      throw new Error('GitHub PUT(raw) ' + path + ': ' + res.status + ' ' + (d.message || ''));
+    }
+    return res.json();
+  }
+
+  async function ghDelete(path, sha, message) {
+    var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
+              '/contents/' + encodeURIComponent(path);
+    var res = await fetch(url, {
+      method: 'DELETE',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, ghHeaders()),
+      body: JSON.stringify({ message: message, sha: sha, branch: BRANCH }),
+    });
+    if (!res.ok && res.status !== 404) {
+      var d = await res.json().catch(function () { return {}; });
+      throw new Error('GitHub DELETE ' + path + ': ' + res.status + ' ' + (d.message || ''));
+    }
+    return true;
+  }
+
+  function mimeForName(name) {
+    var n = (name || '').toLowerCase();
+    if (n.endsWith('.png')) return 'image/png';
+    if (n.endsWith('.webp')) return 'image/webp';
+    if (n.endsWith('.heic')) return 'image/heic';
+    return 'image/jpeg';
+  }
+
+  // YYYY-MM bucket for the keep-forever archive (spec §3). From the slip's
+  // transaction date when known, else the current month.
+  function slipMonth(dateStr) {
+    var m = /^(\d{4})-(\d{2})/.exec(dateStr || '');
+    if (m) return m[1] + '-' + m[2];
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  // loadDrafts — normalized list: {id, filename, image_path, slip_path,
+  // slip_type, fields, is_duplicate}. id is the stable key review.html dedups
+  // on (slip_path on Mac, filename on GitHub).
+  async function loadDrafts() {
+    if (MODE === 'local') {
+      var res = await fetch('/api/drafts');
+      if (!res.ok) throw new Error('GET /api/drafts: ' + res.status);
+      var data = await res.json();
+      var drafts = (data && data.drafts) ? data.drafts : [];
+      return drafts.map(function (d) {
+        return {
+          id:         d.slip_path || d.filename,
+          filename:   d.filename,
+          image_path: d.image_path || null,
+          slip_path:  d.slip_path || null,
+          slip_type:  d.slip_type || '',
+          fields:     d.fields || {},
+          is_duplicate: !!d.is_duplicate,
+        };
+      });
+    }
+    // GitHub: drafts.json written by ocr_inbox.py — a bare array (but tolerate
+    // the Mac batch shape {drafts:[...]} too).
+    var got = await ghGet('drafts.json');
+    var arr = [];
+    if (got.content) {
+      try {
+        var parsed = JSON.parse(got.content);
+        arr = Array.isArray(parsed) ? parsed : (parsed.drafts || []);
+      } catch (e) { arr = []; }
+    }
+    return arr.map(function (d) {
+      return {
+        id:         d.filename,
+        filename:   d.filename,
+        image_path: d.image_path || ('inbox/' + d.filename),
+        slip_path:  null,
+        slip_type:  d.slip_type || '',
+        fields:     d.fields || {},
+        is_duplicate: !!d.is_duplicate,
+      };
+    });
+  }
+
+  // loadSlipImage — an <img>-ready src for a draft (from loadDrafts).
+  async function loadSlipImage(slip) {
+    if (MODE === 'local') {
+      // Existing Flask slip route serves both inbox and archived images.
+      return '/slips/' + encodeURIComponent(slip.filename);
+    }
+    var path = slip.image_path || ('inbox/' + slip.filename);
+    var got = await ghGetRaw(path);
+    if (!got) return '';
+    return 'data:' + mimeForName(slip.filename) + ';base64,' + got.base64;
+  }
+
+  // submitReview — commit a batch of decisions (the review gate). Mirrors the
+  // Mac commit_decisions() contract. Nothing here runs until "Submit batch".
+  //
+  // decisions: [{id, slip_path, filename, image_path, slip_type, decision,
+  //              edited, fields?}]  (fields present only for 'confirmed').
+  async function submitReview(decisions) {
+    if (MODE === 'local') {
+      var res = await fetch('/api/review/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decisions: decisions }),
+      });
+      if (!res.ok) {
+        var txt = await res.text();
+        throw new Error('Server ' + res.status + ': ' + txt);
+      }
+      return res.json();
+    }
+
+    // GitHub mode — replicate commit_decisions():
+    //   1. archive every decided slip into inbox/archive/<YYYY-MM>/ (keep
+    //      forever; rejected get a REJECTED_ prefix and no DB row),
+    //   2. append confirmed rows to database.csv in one batched pass,
+    //   3. rewrite drafts.json removing every decided slip.
+    var confirmed = decisions.filter(function (d) { return d.decision === 'confirmed'; });
+    var rejected  = decisions.filter(function (d) { return d.decision === 'rejected'; });
+    var ts = nowHuman();
+    var base = Date.now();
+
+    // 1 + collect rows. Archive moves happen first so a mid-batch failure
+    // leaves database.csv untouched (safer to retry than to double-write rows).
+    var newRows = [];
+    for (var i = 0; i < decisions.length; i++) {
+      var dec = decisions[i];
+      var fields = dec.fields || {};
+      var month = slipMonth(fields.Date);
+      var srcPath = dec.image_path || ('inbox/' + dec.filename);
+      var archiveName = (dec.decision === 'rejected' ? 'REJECTED_' : '') + dec.filename;
+      var destPath = 'inbox/archive/' + month + '/' + archiveName;
+
+      var img = await ghGetRaw(srcPath);
+      if (img) {
+        await ghPutRaw(destPath, img.base64, 'archive slip ' + archiveName);
+        await ghDelete(srcPath, img.sha, 'remove inbox slip ' + dec.filename);
+      }
+
+      if (dec.decision === 'confirmed') {
+        newRows.push({
+          Date:        String(fields.Date || '').trim(),
+          Description: String(fields.Description || '').trim(),
+          Amount:      String(fields.Amount || '').trim(),
+          Category:    String(fields.Category || '').trim(),
+          Note:        String(fields.Note || '').trim(),
+          RefID:       'p' + (base + i),     // unique within the batch
+          ReviewedAt:  ts,
+          Edited:      'No',
+          Deleted:     'False',
+        });
+      }
+    }
+
+    // 2. append confirmed rows
+    if (newRows.length) {
+      await mutateCsv('database.csv', function (rows) {
+        return rows.concat(newRows);
+      }, 'review from phone: commit ' + newRows.length + ' row(s)', DB_COLUMNS);
+    }
+
+    // 3. drop decided slips from drafts.json
+    var decidedIds = {};
+    decisions.forEach(function (d) { decidedIds[d.id] = true; });
+    var draftsGot = await ghGet('drafts.json');
+    var draftArr = [];
+    if (draftsGot.content) {
+      try {
+        var p = JSON.parse(draftsGot.content);
+        draftArr = Array.isArray(p) ? p : (p.drafts || []);
+      } catch (e) { draftArr = []; }
+    }
+    var remaining = draftArr.filter(function (d) { return !decidedIds[d.filename]; });
+    await ghPut('drafts.json', JSON.stringify(remaining, null, 2), draftsGot.sha,
+                'review from phone: clear ' + decisions.length + ' decided slip(s)');
+
+    return { confirmed: confirmed.length, rejected: rejected.length };
+  }
+
+  // loadScanStatus — Mac-only (background OCR worker). Exported only in local
+  // mode so review.html's `typeof DataSource.loadScanStatus === 'function'`
+  // guard skips polling on the phone (drafts refresh hourly via the Action).
+  async function loadScanStatus() {
+    var res = await fetch('/api/scan/status');
+    if (!res.ok) throw new Error('GET /api/scan/status: ' + res.status);
+    return res.json();
+  }
+
+  // -------------------------------------------------------------------------
   // Export
   // -------------------------------------------------------------------------
 
@@ -706,8 +928,18 @@
     confirmRoong:        confirmRoong,
     cancelRoong:         cancelRoong,
 
+    loadDrafts:          loadDrafts,
+    loadSlipImage:       loadSlipImage,
+    submitReview:        submitReview,
+
     resetToken:          resetToken,
   };
+
+  // Mac-only: drives the review page's "scanning… N of M" polling. Left off the
+  // export in GitHub mode so review.html's typeof guard skips polling there.
+  if (MODE === 'local') {
+    window.DataSource.loadScanStatus = loadScanStatus;
+  }
 
   // -------------------------------------------------------------------------
   // Auto-injected mode footer (GitHub mode only)

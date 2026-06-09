@@ -26,6 +26,12 @@
          border:1px solid var(--border);border-radius:12px;
          text-decoration:none;color:var(--text);font-weight:500;}
   a.tile:active{background:var(--bg);}
+  a.tile.primary{background:var(--green);color:#fff;border-color:var(--green);}
+  a.tile.primary .arrow{color:rgba(255,255,255,0.7);}
+  .tile-right{display:flex;align-items:center;gap:9px;}
+  .badge{min-width:22px;height:22px;padding:0 7px;border-radius:999px;
+         background:#fff;color:var(--green);font-family:var(--mono);font-size:12px;
+         font-weight:500;display:none;align-items:center;justify-content:center;}
   .arrow{color:var(--text-faint);font-family:var(--mono);}
   .meta{margin-top:24px;font-size:11px;color:var(--text-faint);
         font-family:var(--mono);line-height:1.7;}
@@ -35,6 +41,10 @@
 <div class="wrap">
   <h1>Budget</h1>
   <div class="sub">phone · github mode</div>
+  <a class="tile primary" href="review.html">
+    <span>📥 Review slips</span>
+    <span class="tile-right"><span class="badge" id="review-badge">0</span><span class="arrow">›</span></span>
+  </a>
   <a class="tile" href="entry_form.html"><span>+ Add entry</span><span class="arrow">›</span></a>
   <a class="tile" href="monthly_report.html"><span>Monthly report</span><span class="arrow">›</span></a>
   <a class="tile" href="edit_log.html"><span>Edit log</span><span class="arrow">›</span></a>
@@ -42,9 +52,24 @@
   <a class="tile" href="statement_verify.html"><span>Verify statements</span><span class="arrow">›</span></a>
   <div class="meta">
     Data lives in your private budget-data repo on GitHub.<br>
-    Slip OCR runs on your Mac. Entries you add here merge in next time the Mac syncs.
+    Slip OCR runs automatically (hourly) via GitHub Actions; review them here.
   </div>
 </div>
 <script src="data-source.js"></script>
+<script>
+  // Show a pending-drafts badge on the Review tile. Best-effort — if the count
+  // can't be fetched, the tile still works; the badge just stays hidden.
+  (async function () {
+    try {
+      var drafts = await DataSource.loadDrafts();
+      var n = (drafts || []).length;
+      if (n > 0) {
+        var b = document.getElementById('review-badge');
+        b.textContent = n;
+        b.style.display = 'inline-flex';
+      }
+    } catch (e) { /* leave badge hidden */ }
+  })();
+</script>
 </body>
 </html>
