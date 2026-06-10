@@ -853,71 +853,101 @@
       return res.json();
     }
 
-    // GitHub mode — replicate commit_decisions():
+    // GitHub mode — replicate commit_decisions(). GitHub has no transactions, so
+    // every step is made idempotent / re-runnable: if a submit is interrupted
+    // (slow upload, user navigates away), re-submitting the same batch is safe.
     //   1. archive every decided slip into inbox/archive/<YYYY-MM>/ (keep
-    //      forever; rejected get a REJECTED_ prefix and no DB row),
-    //   2. append confirmed rows to database.csv in one batched pass,
-    //   3. rewrite drafts.json removing every decided slip.
+    //      forever; rejected get a REJECTED_ prefix and no DB row). Downloads run
+    //      in parallel (the slow part on 4G); writes stay serial (see below).
+    //   2. append confirmed rows to database.csv, skipping any whose Date+Amount
+    //      already exists (duplicate guard — mirrors ocr_inbox.is_duplicate).
+    //   3. rewrite drafts.json removing every decided slip (retry on SHA race).
     var confirmed = decisions.filter(function (d) { return d.decision === 'confirmed'; });
     var rejected  = decisions.filter(function (d) { return d.decision === 'rejected'; });
     var ts = nowHuman();
     var base = Date.now();
 
-    // 1 + collect rows. Archive moves happen first so a mid-batch failure
-    // leaves database.csv untouched (safer to retry than to double-write rows).
-    var newRows = [];
-    for (var i = 0; i < decisions.length; i++) {
-      var dec = decisions[i];
-      var fields = dec.fields || {};
-      var month = slipMonth(fields.Date);
+    // 1. Download every slip's bytes in parallel — this is the slow leg on 4G,
+    //    especially for >1 MB photos (which now cost two GETs). The archive PUT
+    //    and inbox DELETE are kept SERIAL: each is a commit to the same branch,
+    //    and concurrent commits race (409). A slip whose inbox image is already
+    //    gone (re-run of an interrupted submit) just no-ops here.
+    var fetched = await Promise.all(decisions.map(async function (dec) {
       var srcPath = dec.image_path || ('inbox/' + dec.filename);
-      var archiveName = (dec.decision === 'rejected' ? 'REJECTED_' : '') + dec.filename;
-      var destPath = 'inbox/archive/' + month + '/' + archiveName;
-
       var img = await ghGetRaw(srcPath);
-      if (img) {
-        await ghPutRaw(destPath, img.base64, 'archive slip ' + archiveName);
-        await ghDelete(srcPath, img.sha, 'remove inbox slip ' + dec.filename);
-      }
-
-      if (dec.decision === 'confirmed') {
-        newRows.push({
-          Date:        String(fields.Date || '').trim(),
-          Description: String(fields.Description || '').trim(),
-          Amount:      String(fields.Amount || '').trim(),
-          Category:    String(fields.Category || '').trim(),
-          Note:        String(fields.Note || '').trim(),
-          RefID:       'p' + (base + i),     // unique within the batch
-          ReviewedAt:  ts,
-          Edited:      'No',
-          Deleted:     'False',
-        });
-      }
+      return { dec: dec, srcPath: srcPath, img: img };
+    }));
+    for (var i = 0; i < fetched.length; i++) {
+      var f = fetched[i];
+      if (!f.img) continue;
+      var aFields = f.dec.fields || {};
+      var month = slipMonth(aFields.Date);
+      var archiveName = (f.dec.decision === 'rejected' ? 'REJECTED_' : '') + f.dec.filename;
+      var destPath = 'inbox/archive/' + month + '/' + archiveName;
+      await ghPutRaw(destPath, f.img.base64, 'archive slip ' + archiveName);
+      await ghDelete(f.srcPath, f.img.sha, 'remove inbox slip ' + f.dec.filename);
     }
 
-    // 2. append confirmed rows
+    // 2. Append confirmed rows, skipping any whose Date+Amount already matches a
+    //    non-deleted DB row. This makes re-submitting an interrupted batch
+    //    idempotent (no silent duplicate). The guard compares only against rows
+    //    that existed BEFORE this batch, so two genuinely-identical confirmed
+    //    slips in one fresh batch both still write.
+    var newRows = confirmed.map(function (dec, idx) {
+      var fields = dec.fields || {};
+      return {
+        Date:        String(fields.Date || '').trim(),
+        Description: String(fields.Description || '').trim(),
+        Amount:      String(fields.Amount || '').trim(),
+        Category:    String(fields.Category || '').trim(),
+        Note:        String(fields.Note || '').trim(),
+        RefID:       'p' + (base + idx),     // unique within the batch
+        ReviewedAt:  ts,
+        Edited:      'No',
+        Deleted:     'False',
+      };
+    });
+    var addedCount = newRows.length;
     if (newRows.length) {
       await mutateCsv('database.csv', function (rows) {
-        return rows.concat(newRows);
-      }, 'review from phone: commit ' + newRows.length + ' row(s)', DB_COLUMNS);
+        var existing = {};
+        rows.forEach(function (r) {
+          if (String(r.Deleted || '').toLowerCase() !== 'true') {
+            existing[r.Date + ' ' + r.Amount] = true;
+          }
+        });
+        var toAdd = newRows.filter(function (nr) {
+          return !existing[nr.Date + ' ' + nr.Amount];
+        });
+        addedCount = toAdd.length;
+        return rows.concat(toAdd);
+      }, 'review from phone: commit confirmed row(s)', DB_COLUMNS);
     }
 
-    // 3. drop decided slips from drafts.json
+    // 3. Drop every decided slip from drafts.json, retrying on a SHA race.
     var decidedIds = {};
     decisions.forEach(function (d) { decidedIds[d.id] = true; });
-    var draftsGot = await ghGet('drafts.json');
-    var draftArr = [];
-    if (draftsGot.content) {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      var draftsGot = await ghGet('drafts.json');
+      var draftArr = [];
+      if (draftsGot.content) {
+        try {
+          var p = JSON.parse(draftsGot.content);
+          draftArr = Array.isArray(p) ? p : (p.drafts || []);
+        } catch (e) { draftArr = []; }
+      }
+      var remaining = draftArr.filter(function (d) { return !decidedIds[d.filename]; });
       try {
-        var p = JSON.parse(draftsGot.content);
-        draftArr = Array.isArray(p) ? p : (p.drafts || []);
-      } catch (e) { draftArr = []; }
+        await ghPut('drafts.json', JSON.stringify(remaining, null, 2), draftsGot.sha,
+                    'review from phone: clear ' + decisions.length + ' decided slip(s)');
+        break;
+      } catch (e) {
+        if ((e.status === 409 || e.status === 422) && attempt < 2) continue;
+        throw e;
+      }
     }
-    var remaining = draftArr.filter(function (d) { return !decidedIds[d.filename]; });
-    await ghPut('drafts.json', JSON.stringify(remaining, null, 2), draftsGot.sha,
-                'review from phone: clear ' + decisions.length + ' decided slip(s)');
 
-    return { confirmed: confirmed.length, rejected: rejected.length };
+    return { confirmed: addedCount, rejected: rejected.length };
   }
 
   // loadScanStatus — Mac-only (background OCR worker). Exported only in local

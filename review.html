@@ -564,9 +564,22 @@ function openLightbox(id) {
 function closeLightbox() { document.getElementById('lightbox').classList.remove('visible'); }
 
 // --- Submit (batch gate) -------------------------------------------------
+// Warn before the page unloads mid-submit. A submit is several GitHub writes;
+// leaving partway used to strand drafts.json (queue still showed the slips even
+// though they'd committed). submitReview is now idempotent, but blocking the
+// accidental tap keeps the spinner uninterrupted.
+function blockUnload(e) { e.preventDefault(); e.returnValue = ''; return ''; }
+
 async function submitBatch() {
   const btn = document.getElementById('submit-btn');
   btn.disabled = true; btn.textContent = 'Submitting…';
+  const homeBtn = document.querySelector('.home-link');
+  if (homeBtn) homeBtn.style.pointerEvents = 'none';
+  window.addEventListener('beforeunload', blockUnload);
+  const finish = () => {
+    window.removeEventListener('beforeunload', blockUnload);
+    if (homeBtn) homeBtn.style.pointerEvents = '';
+  };
 
   const decisions = slips
     .filter(s => s.status !== 'pending')
@@ -585,6 +598,7 @@ async function submitBatch() {
 
   try {
     const data = await DataSource.submitReview(decisions);
+    finish();
     document.getElementById('main-content').style.display = 'none';
     document.getElementById('submit-bar').className = 'submit-bar';
     document.getElementById('done-screen').className = 'done-screen visible';
@@ -592,6 +606,7 @@ async function submitBatch() {
     const r = (data && data.rejected  != null) ? data.rejected  : decisions.filter(d => d.decision === 'rejected').length;
     document.getElementById('done-msg').textContent = `${c} row(s) committed · ${r} rejected`;
   } catch (e) {
+    finish();
     btn.disabled = false; btn.textContent = 'Submit batch';
     alert('Submit failed: ' + (e && e.message ? e.message : e));
   }
