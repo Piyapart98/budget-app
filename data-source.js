@@ -688,8 +688,28 @@
   // /api/review/submit flow so review.html is identical in both modes.
   // -------------------------------------------------------------------------
 
+  // Blob -> bare base64 (strips the "data:...;base64," prefix FileReader adds).
+  function blobToBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error('blobToBase64 failed')); };
+      reader.onload = function () {
+        var s = String(reader.result || '');
+        var comma = s.indexOf(',');
+        resolve(comma >= 0 ? s.slice(comma + 1) : s);
+      };
+      reader.readAsDataURL(blob);
+    });
+  }
+
   // Binary-safe GET — ghGet() decodes content as UTF-8 text, which corrupts a
   // JPEG/PNG. For images we keep the raw base64 the API returns.
+  //
+  // The Contents API only inlines base64 `content` for files <= 1 MB; for larger
+  // files it returns 200 with content:"" / encoding:"none". So when content is
+  // empty we re-fetch the same URL with the raw media type (good up to 100 MB)
+  // and base64-encode the bytes ourselves. sha comes from the JSON call (the raw
+  // response carries no JSON), so callers' archive/delete flow is unchanged.
   async function ghGetRaw(path) {
     var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
               '/contents/' + encodeURIComponent(path) +
@@ -698,7 +718,16 @@
     if (res.status === 404) return null;
     if (!res.ok) throw new Error('GitHub GET(raw) ' + path + ': ' + res.status);
     var data = await res.json();
-    return { base64: (data.content || '').replace(/\s/g, ''), sha: data.sha };
+    var base64 = (data.content || '').replace(/\s/g, '');
+    if (!base64) {
+      // Large file (>1 MB): bytes not inlined — fetch them via the raw media type.
+      var rawHeaders = Object.assign({}, ghHeaders(), { 'Accept': 'application/vnd.github.raw' });
+      var rawRes = await fetch(url, { headers: rawHeaders, cache: 'no-store' });
+      if (rawRes.status === 404) return null;
+      if (!rawRes.ok) throw new Error('GitHub GET(raw bytes) ' + path + ': ' + rawRes.status);
+      base64 = await blobToBase64(await rawRes.blob());
+    }
+    return { base64: base64, sha: data.sha };
   }
 
   // PUT raw base64 content (already-encoded bytes — do NOT re-encode).
