@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Budget (new)">
+<title>Budget — new design</title>
+<link rel="stylesheet" href="mock.css">
+</head>
+<body>
+<div class="wrap">
+  <h1 id="greet">Hello</h1>
+  <div class="dateline" id="dateline"></div>
+
+  <div class="card headline-card" id="headline">
+    <div class="hl-top"><span id="hl-label">This month</span><span id="hl-pct"></span></div>
+    <div class="hl-amount" id="hl-amount">…</div>
+    <div class="hl-bar" id="hl-bar-wrap" style="display:none;"><div id="hl-bar"></div></div>
+    <div class="hl-note" id="hl-note"></div>
+  </div>
+
+  <a class="nudge" id="nudge" href="review.html" style="display:none;">
+    <span id="nudge-text">🧾 Slips to review</span><span class="chev">›</span>
+  </a>
+
+  <div class="section-title">Recent spending</div>
+  <div class="card" id="feed"><div class="soft-note">Loading…</div></div>
+
+  <div class="section-title">More</div>
+  <div class="shortcuts">
+    <a class="shortcut" href="monthly_report.html">📊<br>Report</a>
+    <a class="shortcut" href="../entry_form.html">➕<br>Add entry</a>
+    <a class="shortcut" href="../edit_log.html">📝<br>Edit log</a>
+    <a class="shortcut" href="../roong_settlement.html">💛<br>Settlement</a>
+    <a class="shortcut" href="../statement_verify.html">✅<br>Verify</a>
+    <a class="shortcut" href="../index.html">🏠<br>Classic app</a>
+  </div>
+</div>
+<script src="../data-source.js"></script>
+<script src="mock-shared.js"></script>
+<script>
+(function () {
+  'use strict';
+  document.getElementById('greet').textContent = Mock.greeting();
+  document.getElementById('dateline').textContent = Mock.dateline();
+
+  // Headline card + journal feed from database.csv (read-only).
+  (async function () {
+    var feed = document.getElementById('feed');
+    try {
+      var cfgP = DataSource.loadConfig().catch(function () { return null; });
+      var goalsP = DataSource.loadGoals().catch(function () { return {}; });
+      var rows = await DataSource.loadDatabase();
+      var cfg = await cfgP, goals = await goalsP;
+      var isIncome = Mock.incomeTester(cfg);
+      var live = rows.filter(function (r) { return !Mock.isDeleted(r); });
+
+      // This month's spending
+      var mk = Mock.thisMonthKey();
+      var spent = 0;
+      live.forEach(function (r) {
+        if (Mock.monthKey(r.Date) === mk && !isIncome(r.Category)) {
+          spent += parseFloat(r.Amount) || 0;
+        }
+      });
+      document.getElementById('hl-amount').textContent = Mock.fmtBaht(spent);
+      var now = new Date();
+      var daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      var daysLeft = daysInMonth - now.getDate();
+      var budget = (goals && Number(goals.monthly_total)) || 0;
+      if (budget > 0) {
+        var pct = Math.min(100, Math.round(spent / budget * 100));
+        document.getElementById('hl-pct').textContent = pct + '% of budget';
+        document.getElementById('hl-bar-wrap').style.display = '';
+        document.getElementById('hl-bar').style.width = pct + '%';
+        document.getElementById('hl-note').textContent =
+          Mock.fmtBaht(Math.max(0, budget - spent)) + ' left · ' + daysLeft + ' days to go';
+      } else {
+        document.getElementById('hl-note').textContent = daysLeft + ' days left this month';
+      }
+
+      // Journal feed — last 5 transactions by Date then position.
+      var recent = live.slice().sort(function (a, b) {
+        return a.Date < b.Date ? 1 : a.Date > b.Date ? -1 : 0;
+      }).slice(0, 5);
+      if (!recent.length) {
+        Mock.softFail(feed, 'No transactions yet this month.');
+      } else {
+        feed.innerHTML = recent.map(function (r) {
+          var inc = isIncome(r.Category);
+          var label = r.Note || r.Description || r.Category || '—';
+          return '<div class="feed-row">' +
+            '<div class="feed-left"><span>' + Mock.catEmoji(r.Category) + '</span>' +
+            '<span class="feed-desc">' + Mock.escapeHtml(label) +
+            ' <span class="feed-sub">' + Mock.escapeHtml(r.Date) + '</span></span></div>' +
+            '<span class="feed-amt' + (inc ? ' income' : '') + '">' +
+            (inc ? '+' : '−') + Mock.fmtBaht(r.Amount) + '</span></div>';
+        }).join('');
+      }
+    } catch (e) {
+      document.getElementById('hl-amount').textContent = '—';
+      document.getElementById('hl-note').textContent = "Couldn't load spending right now";
+      Mock.softFail(feed, "Couldn't load recent spending right now.");
+    }
+  })();
+
+  // Slips nudge — live drafts count, hidden at 0 or on failure.
+  (async function () {
+    try {
+      var drafts = await DataSource.loadDrafts();
+      var n = (drafts || []).length;
+      if (n > 0) {
+        document.getElementById('nudge-text').textContent =
+          '🧾 ' + n + ' slip' + (n === 1 ? '' : 's') + ' to review';
+        document.getElementById('nudge').style.display = 'flex';
+      }
+    } catch (e) { /* stay hidden */ }
+  })();
+})();
+</script>
+</body>
+</html>
