@@ -59,7 +59,8 @@
   .goal-status.close{color:var(--amber);}
   .settle-tag{font-size:9px;font-family:var(--mono);padding:1px 6px;border-radius:999px;margin-left:6px;vertical-align:middle;white-space:nowrap;font-weight:600;}
   .settle-tag.settled{background:#e3f3e9;color:#1f7a44;}
-  .settle-tag.open-items{background:#fdf3e0;color:#a9700f;}
+  .settle-tag.pending{background:#fdf3e0;color:#a9700f;}
+  .settle-tag.unsettled{background:#fdeaea;color:#b3373c;}
   .goal-entries{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);display:none;}
   .goal-row.open .goal-entries{display:block;}
   .goal-entry{display:grid;grid-template-columns:48px 1fr 70px;gap:8px;font-size:11px;padding:5px 0;align-items:center;}
@@ -248,42 +249,30 @@ async function initReport() {
     const spendRows  = monthRows.filter(r => !isIncome(r.Category));
     const incomeRows = monthRows.filter(r =>  isIncome(r.Category));
 
-    // --- "With Roong" settlement status (for the category tag) ---
-    // Classify this month's With-Roong expenses: settled (confirmed) / pending
-    // (requested, not yet confirmed) / unsettled (never requested). Computed once
-    // here; rendered as a small pill next to the category name below. We only hit
-    // the settlements file when at least one Roong row carries a settlement_id.
+    // --- "With Roong" settlement status (per-row tags) ---
+    // Classify each With-Roong expense: settled (confirmed) / pending (requested,
+    // not yet confirmed) / unsettled (never requested). Rendered as a small pill
+    // on every Roong entry row in the expanded category list. We only hit the
+    // settlements file when at least one Roong row carries a settlement_id.
     const ROONG_CATEGORY = 'With Roong';
-    let roongTag = null; // {cls, text} or null when there are no Roong expenses
     const roongRows = spendRows.filter(r => (r.Category || '') === ROONG_CATEGORY);
-    if (roongRows.length) {
-      const settledSet = new Set();
-      const pendingSet = new Set();
-      if (roongRows.some(r => (r.settlement_id || '').trim())) {
-        try {
-          const [pend, hist] = await Promise.all([
-            DataSource.loadRoongPending(),
-            DataSource.loadRoongHistory(),
-          ]);
-          (pend || []).forEach(s => pendingSet.add(s.settlement_id));
-          (hist || []).forEach(s => settledSet.add(s.settlement_id));
-        } catch (e) { /* leave sets empty — rows fall back to unsettled */ }
-      }
-      let nUnsettled = 0, nPending = 0;
-      roongRows.forEach(r => {
-        const sid = (r.settlement_id || '').trim();
-        if (sid && settledSet.has(sid)) return;          // settled (confirmed)
-        else if (sid && pendingSet.has(sid)) nPending++; // requested, not confirmed
-        else nUnsettled++;                               // never requested (or cancelled)
-      });
-      if (nUnsettled === 0 && nPending === 0) {
-        roongTag = { cls: 'settled', text: '✓ Settled' };
-      } else {
-        const parts = [];
-        if (nUnsettled) parts.push(`${nUnsettled} unsettled`);
-        if (nPending) parts.push(`${nPending} pending`);
-        roongTag = { cls: 'open-items', text: parts.join(' · ') };
-      }
+    const settledSet = new Set();
+    const pendingSet = new Set();
+    if (roongRows.some(r => (r.settlement_id || '').trim())) {
+      try {
+        const [pend, hist] = await Promise.all([
+          DataSource.loadRoongPending(),
+          DataSource.loadRoongHistory(),
+        ]);
+        (pend || []).forEach(s => pendingSet.add(s.settlement_id));
+        (hist || []).forEach(s => settledSet.add(s.settlement_id));
+      } catch (e) { /* leave sets empty — rows fall back to unsettled */ }
+    }
+    function roongRowTag(r) {
+      const sid = (r.settlement_id || '').trim();
+      if (sid && settledSet.has(sid)) return { cls: 'settled', text: '✓ Settled' };
+      if (sid && pendingSet.has(sid)) return { cls: 'pending', text: 'Pending' };
+      return { cls: 'unsettled', text: 'Unsettled' }; // never requested (or cancelled)
     }
 
     // Calculate category totals — SPENDING ONLY
@@ -569,14 +558,16 @@ async function initReport() {
                   d.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
                 const desc = (r.Description || '').trim() || '(no description)';
                 const amt = parseInt(r.Amount) || 0;
-                return `<div class="goal-entry"><span class="ed">${esc(dStr)}</span><span class="en">${esc(desc)}</span><span class="ea">฿${amt.toLocaleString()}</span></div>`;
+                const tag = (cat === ROONG_CATEGORY) ? roongRowTag(r) : null;
+                const tagHtml = tag ? ` <span class="settle-tag ${tag.cls}">${esc(tag.text)}</span>` : '';
+                return `<div class="goal-entry"><span class="ed">${esc(dStr)}</span><span class="en">${esc(desc)}${tagHtml}</span><span class="ea">฿${amt.toLocaleString()}</span></div>`;
               }).join('');
 
           const el = document.createElement('div');
           el.className = 'goal-row';
           el.innerHTML = `
             <div class="goal-header">
-              <span>${esc(cat)}${(cat === ROONG_CATEGORY && roongTag) ? ` <span class="settle-tag ${roongTag.cls}">${esc(roongTag.text)}</span>` : ''}</span>
+              <span>${esc(cat)}</span>
               <span class="right">฿${spent.toLocaleString()} / ฿${goal.toLocaleString()} <span class="goal-chev">▶</span></span>
             </div>
             <div class="progress-track"><div class="progress-bar ${barClass}" style="width:${pct}%"></div></div>
