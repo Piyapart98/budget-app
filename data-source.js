@@ -176,6 +176,35 @@
     };
   }
 
+  // fetch with a hard timeout. Mobile Safari can leave a request stalled
+  // forever on a weak cellular link — without this, one dead request silently
+  // freezes a whole submit batch (no error, no alert). GETs retry once on
+  // timeout/network error; writes (PUT/DELETE) do NOT auto-retry, because the
+  // write may have landed server-side — callers' idempotency handles re-runs.
+  var GH_TIMEOUT_MS = 30000;
+
+  async function ghFetch(url, opts) {
+    opts = opts || {};
+    var method = (opts.method || 'GET').toUpperCase();
+    var retries = method === 'GET' ? 1 : 0;
+    for (var attempt = 0; ; attempt++) {
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, GH_TIMEOUT_MS);
+      try {
+        return await fetch(url, Object.assign({}, opts, { signal: ctrl.signal }));
+      } catch (e) {
+        if (attempt < retries) continue;
+        if (e && e.name === 'AbortError') {
+          throw new Error('GitHub request timed out after ' + (GH_TIMEOUT_MS / 1000) +
+                          's (' + method + '). Check your connection and retry.');
+        }
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  }
+
   // GET a file. Returns { content, sha }. If the file doesn't exist returns
   // { content: '', sha: null } so first-time creates work naturally.
   async function ghGet(path) {
@@ -185,7 +214,7 @@
               // Cache-bust — without this, Safari sometimes serves a stale
               // version after the user just committed via the same page.
               '&_t=' + Date.now();
-    var res = await fetch(url, { headers: ghHeaders(), cache: 'no-store' });
+    var res = await ghFetch(url, { headers: ghHeaders(), cache: 'no-store' });
     if (res.status === 404) return { content: '', sha: null };
     if (res.status === 401) {
       // Token rejected — wipe it so the next call re-prompts.
@@ -210,7 +239,7 @@
       branch: BRANCH,
     };
     if (sha) body.sha = sha;
-    var res = await fetch(url, {
+    var res = await ghFetch(url, {
       method: 'PUT',
       headers: Object.assign({ 'Content-Type': 'application/json' }, ghHeaders()),
       body: JSON.stringify(body),
@@ -714,7 +743,7 @@
     var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
               '/contents/' + encodeURIComponent(path) +
               '?ref=' + encodeURIComponent(BRANCH) + '&_t=' + Date.now();
-    var res = await fetch(url, { headers: ghHeaders(), cache: 'no-store' });
+    var res = await ghFetch(url, { headers: ghHeaders(), cache: 'no-store' });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error('GitHub GET(raw) ' + path + ': ' + res.status);
     var data = await res.json();
@@ -722,7 +751,7 @@
     if (!base64) {
       // Large file (>1 MB): bytes not inlined — fetch them via the raw media type.
       var rawHeaders = Object.assign({}, ghHeaders(), { 'Accept': 'application/vnd.github.raw' });
-      var rawRes = await fetch(url, { headers: rawHeaders, cache: 'no-store' });
+      var rawRes = await ghFetch(url, { headers: rawHeaders, cache: 'no-store' });
       if (rawRes.status === 404) return null;
       if (!rawRes.ok) throw new Error('GitHub GET(raw bytes) ' + path + ': ' + rawRes.status);
       base64 = await blobToBase64(await rawRes.blob());
@@ -734,7 +763,7 @@
   async function ghPutRaw(path, base64, message) {
     var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
               '/contents/' + encodeURIComponent(path);
-    var res = await fetch(url, {
+    var res = await ghFetch(url, {
       method: 'PUT',
       headers: Object.assign({ 'Content-Type': 'application/json' }, ghHeaders()),
       body: JSON.stringify({ message: message, content: base64, branch: BRANCH }),
@@ -749,7 +778,7 @@
   async function ghDelete(path, sha, message) {
     var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
               '/contents/' + encodeURIComponent(path);
-    var res = await fetch(url, {
+    var res = await ghFetch(url, {
       method: 'DELETE',
       headers: Object.assign({ 'Content-Type': 'application/json' }, ghHeaders()),
       body: JSON.stringify({ message: message, sha: sha, branch: BRANCH }),
@@ -839,7 +868,9 @@
   //
   // decisions: [{id, slip_path, filename, image_path, slip_type, decision,
   //              edited, fields?}]  (fields present only for 'confirmed').
-  async function submitReview(decisions) {
+  // onProgress (optional): function(text) — UI status updates during the batch.
+  async function submitReview(decisions, onProgress) {
+    var progress = typeof onProgress === 'function' ? onProgress : function () {};
     if (MODE === 'local') {
       var res = await fetch('/api/review/submit', {
         method: 'POST',
@@ -854,41 +885,25 @@
     }
 
     // GitHub mode — replicate commit_decisions(). GitHub has no transactions, so
-    // every step is made idempotent / re-runnable: if a submit is interrupted
-    // (slow upload, user navigates away), re-submitting the same batch is safe.
-    //   1. archive every decided slip into inbox/archive/<YYYY-MM>/ (keep
-    //      forever; rejected get a REJECTED_ prefix and no DB row). Downloads run
-    //      in parallel (the slow part on 4G); writes stay serial (see below).
-    //   2. append confirmed rows to database.csv, skipping any whose Date+Amount
+    // the order puts the durable, user-visible writes FIRST and keeps every step
+    // idempotent / re-runnable:
+    //   1. append confirmed rows to database.csv, skipping any whose Date+Amount
     //      already exists (duplicate guard — mirrors ocr_inbox.is_duplicate).
-    //   3. rewrite drafts.json removing every decided slip (retry on SHA race).
+    //   2. rewrite drafts.json removing every decided slip (retry on SHA race).
+    //      → after these two commits (<10 s) the batch is committed and the
+    //        review queue is correct; nothing later can lose data.
+    //   3. archive slip images into inbox/archive/<YYYY-MM>/ (keep forever;
+    //      rejected get a REJECTED_ prefix and no DB row) — BEST-EFFORT: a slip
+    //      whose archive move fails just stays in inbox/ for a later sweep, it
+    //      never aborts the batch. This used to run first, which meant a stalled
+    //      request on cellular did all the housekeeping and none of the real
+    //      work (2026-06-12 incident: 11/20 slips archived, zero rows written).
     var confirmed = decisions.filter(function (d) { return d.decision === 'confirmed'; });
     var rejected  = decisions.filter(function (d) { return d.decision === 'rejected'; });
     var ts = nowHuman();
     var base = Date.now();
 
-    // 1. Download every slip's bytes in parallel — this is the slow leg on 4G,
-    //    especially for >1 MB photos (which now cost two GETs). The archive PUT
-    //    and inbox DELETE are kept SERIAL: each is a commit to the same branch,
-    //    and concurrent commits race (409). A slip whose inbox image is already
-    //    gone (re-run of an interrupted submit) just no-ops here.
-    var fetched = await Promise.all(decisions.map(async function (dec) {
-      var srcPath = dec.image_path || ('inbox/' + dec.filename);
-      var img = await ghGetRaw(srcPath);
-      return { dec: dec, srcPath: srcPath, img: img };
-    }));
-    for (var i = 0; i < fetched.length; i++) {
-      var f = fetched[i];
-      if (!f.img) continue;
-      var aFields = f.dec.fields || {};
-      var month = slipMonth(aFields.Date);
-      var archiveName = (f.dec.decision === 'rejected' ? 'REJECTED_' : '') + f.dec.filename;
-      var destPath = 'inbox/archive/' + month + '/' + archiveName;
-      await ghPutRaw(destPath, f.img.base64, 'archive slip ' + archiveName);
-      await ghDelete(f.srcPath, f.img.sha, 'remove inbox slip ' + f.dec.filename);
-    }
-
-    // 2. Append confirmed rows, skipping any whose Date+Amount already matches a
+    // 1. Append confirmed rows, skipping any whose Date+Amount already matches a
     //    non-deleted DB row. This makes re-submitting an interrupted batch
     //    idempotent (no silent duplicate). The guard compares only against rows
     //    that existed BEFORE this batch, so two genuinely-identical confirmed
@@ -909,6 +924,7 @@
     });
     var addedCount = newRows.length;
     if (newRows.length) {
+      progress('Committing ' + newRows.length + ' row(s)…');
       await mutateCsv('database.csv', function (rows) {
         var existing = {};
         rows.forEach(function (r) {
@@ -924,7 +940,8 @@
       }, 'review from phone: commit confirmed row(s)', DB_COLUMNS);
     }
 
-    // 3. Drop every decided slip from drafts.json, retrying on a SHA race.
+    // 2. Drop every decided slip from drafts.json, retrying on a SHA race.
+    progress('Clearing review queue…');
     var decidedIds = {};
     decisions.forEach(function (d) { decidedIds[d.id] = true; });
     for (var attempt = 0; attempt < 3; attempt++) {
@@ -947,7 +964,51 @@
       }
     }
 
-    return { confirmed: addedCount, rejected: rejected.length };
+    // 3. Archive images — best-effort. Downloads run in parallel (the slow leg
+    //    on 4G, especially >1 MB photos which cost two GETs); the archive PUT
+    //    and inbox DELETE stay SERIAL — each is a commit to the same branch and
+    //    concurrent commits race (409). A slip whose inbox image is already
+    //    gone (re-run of an interrupted submit) no-ops. Per-slip failures are
+    //    collected, not thrown — the rows are already committed above, and a
+    //    leftover inbox image is harmless (no draft points at it anymore).
+    var archiveFailed = 0;
+    var fetched = await Promise.all(decisions.map(async function (dec) {
+      var srcPath = dec.image_path || ('inbox/' + dec.filename);
+      try {
+        return { dec: dec, srcPath: srcPath, img: await ghGetRaw(srcPath) };
+      } catch (e) {
+        return { dec: dec, srcPath: srcPath, img: null, failed: true };
+      }
+    }));
+    for (var i = 0; i < fetched.length; i++) {
+      var f = fetched[i];
+      if (f.failed) { archiveFailed++; continue; }
+      if (!f.img) continue;
+      progress('Archiving slips ' + (i + 1) + '/' + fetched.length + '…');
+      var aFields = f.dec.fields || {};
+      var month = slipMonth(aFields.Date);
+      var archiveName = (f.dec.decision === 'rejected' ? 'REJECTED_' : '') + f.dec.filename;
+      var destPath = 'inbox/archive/' + month + '/' + archiveName;
+      try {
+        try {
+          await ghPutRaw(destPath, f.img.base64, 'archive slip ' + archiveName);
+        } catch (e) {
+          // 422 here usually means the archive copy already exists (PUT without
+          // sha onto an existing path) — a half-finished earlier run. Treat as
+          // archived and fall through to delete the inbox original.
+          if (!/422/.test(String(e && e.message))) throw e;
+        }
+        await ghDelete(f.srcPath, f.img.sha, 'remove inbox slip ' + f.dec.filename);
+      } catch (e) {
+        archiveFailed++;
+        if (window.console && console.warn) {
+          console.warn('archive failed for ' + f.dec.filename + ': ' + (e && e.message));
+        }
+      }
+    }
+
+    return { confirmed: addedCount, rejected: rejected.length,
+             archive_failed: archiveFailed };
   }
 
   // loadScanStatus — Mac-only (background OCR worker). Exported only in local

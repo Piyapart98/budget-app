@@ -597,14 +597,16 @@ async function submitBatch() {
     });
 
   try {
-    const data = await DataSource.submitReview(decisions);
+    const data = await DataSource.submitReview(decisions, txt => { btn.textContent = txt; });
     finish();
     document.getElementById('main-content').style.display = 'none';
     document.getElementById('submit-bar').className = 'submit-bar';
     document.getElementById('done-screen').className = 'done-screen visible';
     const c = (data && data.confirmed != null) ? data.confirmed : decisions.filter(d => d.decision === 'confirmed').length;
     const r = (data && data.rejected  != null) ? data.rejected  : decisions.filter(d => d.decision === 'rejected').length;
-    document.getElementById('done-msg').textContent = `${c} row(s) committed · ${r} rejected`;
+    let msg = `${c} row(s) committed · ${r} rejected`;
+    if (data && data.archive_failed) msg += ` · ${data.archive_failed} image(s) left in inbox (harmless)`;
+    document.getElementById('done-msg').textContent = msg;
   } catch (e) {
     finish();
     btn.disabled = false; btn.textContent = 'Submit batch';
