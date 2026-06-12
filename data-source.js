@@ -892,7 +892,9 @@
     //   2. rewrite drafts.json removing every decided slip (retry on SHA race).
     //      → after these two commits (<10 s) the batch is committed and the
     //        review queue is correct; nothing later can lose data.
-    //   3. archive slip images into inbox/archive/<YYYY-MM>/ (keep forever;
+    //   3. append confirmed (Description, Category) pairs to User_History.csv
+    //      so the hourly OCR Action predicts better next run — BEST-EFFORT.
+    //   4. archive slip images into inbox/archive/<YYYY-MM>/ (keep forever;
     //      rejected get a REJECTED_ prefix and no DB row) — BEST-EFFORT: a slip
     //      whose archive move fails just stays in inbox/ for a later sweep, it
     //      never aborts the batch. This used to run first, which meant a stalled
@@ -964,7 +966,51 @@
       }
     }
 
-    // 3. Archive images — best-effort. Downloads run in parallel (the slow leg
+    // 3. Teach the category predictor — best-effort. Append each confirmed
+    //    (Description, Category) to User_History.csv so the hourly OCR Action
+    //    predicts better on its next run (the same re-learn the Mac does in
+    //    commit_decisions). A failure never aborts the batch — the rows and
+    //    queue are already committed above.
+    var historyRows = confirmed
+      .map(function (dec) {
+        var f = dec.fields || {};
+        return {
+          Description: String(f.Description || '').trim(),
+          Category:    String(f.Category || '').trim(),
+        };
+      })
+      .filter(function (r) { return r.Description && r.Category; });
+    if (historyRows.length) {
+      progress('Updating category history…');
+      try {
+        await mutateCsv('User_History.csv', function (rows) {
+          var nextId = 1;
+          rows.forEach(function (r) {
+            var n = parseInt(r.History_ID, 10);
+            if (!isNaN(n) && n >= nextId) nextId = n + 1;
+          });
+          var today = new Date().toISOString().slice(0, 10);
+          historyRows.forEach(function (hr) {
+            rows.push({
+              History_ID:  String(nextId++),
+              Date:        today,
+              Description: hr.Description,
+              Category:    hr.Category,
+            });
+          });
+          return rows;
+        }, 'review from phone: learn ' + historyRows.length + ' categor' +
+           (historyRows.length === 1 ? 'y' : 'ies'),
+           ['History_ID', 'Date', 'Description', 'Category']);
+      } catch (e) {
+        if (window.console && console.warn) {
+          console.warn('history update failed (predictions unaffected this batch): ' +
+                       (e && e.message));
+        }
+      }
+    }
+
+    // 4. Archive images — best-effort. Downloads run in parallel (the slow leg
     //    on 4G, especially >1 MB photos which cost two GETs); the archive PUT
     //    and inbox DELETE stay SERIAL — each is a commit to the same branch and
     //    concurrent commits race (409). A slip whose inbox image is already
