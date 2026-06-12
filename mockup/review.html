@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Review — new design</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .topbar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;}
+  .progress{font-size:12px;color:var(--text-faint);}
+  .stage{position:relative;min-height:60vh;}
+  .slip-card{position:absolute;inset:0;background:var(--surface);border:1px solid var(--border);
+             border-radius:18px;padding:14px;box-shadow:0 4px 18px rgba(0,0,0,.07);
+             touch-action:pan-y;transition:transform .25s ease,opacity .25s ease;}
+  .slip-card.gone-right{transform:translateX(120%) rotate(8deg);opacity:0;}
+  .slip-card.gone-left{transform:translateX(-120%) rotate(-8deg);opacity:0;}
+  .slip-img{width:100%;height:38vh;object-fit:contain;background:#f4f1ea;border-radius:12px;}
+  .slip-amount{font-size:22px;font-weight:700;margin-top:10px;}
+  .slip-sub{font-size:12px;color:var(--text-soft);margin:2px 0 10px;}
+  .actions{display:flex;gap:10px;margin-top:14px;}
+  .actions .btn-ghost{flex:1;} .actions .btn-green{flex:2;}
+  .done-box{text-align:center;padding:40px 10px;}
+  .done-box h2{font-family:var(--serif);font-weight:400;font-size:22px;margin-bottom:8px;}
+  .done-list{text-align:left;margin-top:16px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>Review</h1>
+    <span class="progress" id="progress"></span>
+  </div>
+  <a class="back-link" href="index.html">‹ Home</a>
+  <div class="stage" id="stage"><div class="soft-note">Loading slips…</div></div>
+</div>
+<script src="../data-source.js"></script>
+<script src="mock-shared.js"></script>
+<script>
+(function () {
+  'use strict';
+  // Must match review.html CAT_GROUPS (spending list shown as chips).
+  var CATS = ['Food','Drinks and Snacks','Transport','Health / Necessaries','Shopping',
+    'Groceries','Utilities and Subs','Sports','Social Expenses / Donation',
+    'With Roong','To Mom','Other'];
+
+  var slips = [], cursor = 0, decisions = [];
+  var stage = document.getElementById('stage');
+
+  function fieldVal(slip, key) {
+    var f = (slip.fields || {})[key];
+    return (f && f.value != null) ? String(f.value) : '';
+  }
+  function setProgress() {
+    document.getElementById('progress').textContent =
+      slips.length ? Math.min(cursor + 1, slips.length) + ' of ' + slips.length : '';
+  }
+
+  function renderCurrent() {
+    setProgress();
+    if (cursor >= slips.length) return renderDone();
+    var s = slips[cursor];
+    var suggested = fieldVal(s, 'Category') || 'Food';
+    stage.innerHTML =
+      '<div class="slip-card" id="card">' +
+      '<img class="slip-img" id="slip-img" alt="slip">' +
+      '<div class="slip-amount">' + Mock.fmtBaht(fieldVal(s, 'Amount')) + '</div>' +
+      '<div class="slip-sub">' + Mock.escapeHtml(fieldVal(s, 'Description') || s.filename) +
+      ' · ' + Mock.escapeHtml(fieldVal(s, 'Date') || 'date unknown') + '</div>' +
+      '<div id="chips">' + CATS.map(function (c) {
+        return '<span class="chip' + (c === suggested ? ' selected' : '') +
+               '" data-cat="' + Mock.escapeHtml(c) + '">' + Mock.catEmoji(c) + ' ' +
+               Mock.escapeHtml(c) + '</span>';
+      }).join('') + '</div>' +
+      '<div class="actions"><button class="btn btn-ghost" id="skip">Skip</button>' +
+      '<button class="btn btn-green" id="confirm">Looks right ✓</button></div>' +
+      '</div>';
+
+    DataSource.loadSlipImage(s).then(function (src) {
+      var img = document.getElementById('slip-img');
+      if (img && src) img.src = src;
+    }).catch(function () { /* leave placeholder background */ });
+
+    var chosen = suggested;
+    document.getElementById('chips').addEventListener('click', function (e) {
+      var chip = e.target.closest('.chip');
+      if (!chip) return;
+      chosen = chip.getAttribute('data-cat');
+      Array.prototype.forEach.call(document.querySelectorAll('#chips .chip'), function (c) {
+        c.classList.toggle('selected', c === chip);
+      });
+    });
+
+    function decide(kind) {
+      decisions.push({ slip: s, kind: kind, category: chosen });
+      var card = document.getElementById('card');
+      card.classList.add(kind === 'confirm' ? 'gone-right' : 'gone-left');
+      setTimeout(function () { cursor++; renderCurrent(); }, 240);
+    }
+    document.getElementById('confirm').addEventListener('click', function () { decide('confirm'); });
+    document.getElementById('skip').addEventListener('click', function () { decide('skip'); });
+
+    // Swipe: right = confirm, left = skip (same gesture language as the real page).
+    var startX = null, card = document.getElementById('card');
+    card.addEventListener('touchstart', function (e) { startX = e.touches[0].clientX; }, { passive: true });
+    card.addEventListener('touchmove', function (e) {
+      if (startX == null) return;
+      var dx = e.touches[0].clientX - startX;
+      card.style.transform = 'translateX(' + dx + 'px) rotate(' + (dx / 30) + 'deg)';
+    }, { passive: true });
+    card.addEventListener('touchend', function (e) {
+      var dx = e.changedTouches[0].clientX - (startX == null ? 0 : startX);
+      startX = null;
+      if (dx > 80) decide('confirm');
+      else if (dx < -80) decide('skip');
+      else card.style.transform = '';
+    });
+  }
+
+  function renderDone() {
+    var confirmed = decisions.filter(function (d) { return d.kind === 'confirm'; });
+    var skipped = decisions.length - confirmed.length;
+    stage.innerHTML =
+      '<div class="card done-box"><h2>All done 🎉</h2>' +
+      '<div class="soft-note">This is a mockup — nothing was saved. ' +
+      'In the real app this would have submitted ' + confirmed.length + ' slip' +
+      (confirmed.length === 1 ? '' : 's') + (skipped ? ' (and skipped ' + skipped + ')' : '') +
+      '. Use the <a href="../review.html">real Review page</a> to actually submit.</div>' +
+      '<div class="done-list">' + confirmed.map(function (d) {
+        return '<div class="feed-row"><div class="feed-left"><span>' +
+          Mock.catEmoji(d.category) + '</span><span class="feed-desc">' +
+          Mock.escapeHtml(fieldVal(d.slip, 'Description') || d.slip.filename) +
+          ' <span class="feed-sub">' + Mock.escapeHtml(d.category) + '</span></span></div>' +
+          '<span class="feed-amt">−' + Mock.fmtBaht(fieldVal(d.slip, 'Amount')) +
+          '</span></div>';
+      }).join('') + '</div></div>';
+    document.getElementById('progress').textContent = '';
+  }
+
+  (async function () {
+    try {
+      slips = await DataSource.loadDrafts();
+      if (!slips.length) {
+        stage.innerHTML = '<div class="card done-box"><h2>Inbox zero ✨</h2>' +
+          '<div class="soft-note">No slips waiting for review.</div></div>';
+        return;
+      }
+      renderCurrent();
+    } catch (e) {
+      Mock.softFail(stage, "Couldn't load slips right now. Check your connection and reload.");
+    }
+  })();
+})();
+</script>
+</body>
+</html>
