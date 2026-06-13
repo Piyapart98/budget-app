@@ -35,7 +35,15 @@
   var REPO_NAME = 'budget-data';
   var BRANCH = 'main';
 
+  // The code repo hosts the hourly OCR Action (.github/workflows/ocr-inbox.yml).
+  // "Read slip" dispatches that workflow. Triggering it needs a SEPARATE token
+  // with Actions:write here — kept apart from the data token below so the data
+  // PAT stays Contents-only (least privilege).
+  var CODE_REPO_NAME = 'budget-code';
+  var OCR_WORKFLOW_FILE = 'ocr-inbox.yml';
+
   var TOKEN_KEY = 'budget_github_token_v1';
+  var ACTIONS_TOKEN_KEY = 'budget_github_actions_token_v1';
 
   // Column orders MUST match run_pipeline.py (DB_COLUMNS / CHANGELOG_COLUMNS).
   // The Mac side reads the CSVs by header name so order isn't strictly
@@ -76,6 +84,30 @@
   function resetToken() {
     localStorage.removeItem(TOKEN_KEY);
     location.reload();
+  }
+
+  // Separate token for dispatching the OCR Action (Actions:write on budget-code).
+  // Prompted on first "Read slip" tap; stored only in this browser.
+  function getActionsToken() {
+    var t = localStorage.getItem(ACTIONS_TOKEN_KEY);
+    if (!t) {
+      t = window.prompt(
+        'GitHub Actions token (for "Read slip")\n\n' +
+        'Paste a fine-grained PAT scoped to ' + REPO_OWNER + '/' + CODE_REPO_NAME +
+        ' with Actions: Read and write (nothing else).\n' +
+        'Saved in this browser only; used solely to run the OCR workflow.'
+      );
+      if (!t || !t.trim()) {
+        throw new Error('No Actions token provided.');
+      }
+      t = t.trim();
+      localStorage.setItem(ACTIONS_TOKEN_KEY, t);
+    }
+    return t;
+  }
+
+  function resetActionsToken() {
+    localStorage.removeItem(ACTIONS_TOKEN_KEY);
   }
 
   // -------------------------------------------------------------------------
@@ -1087,6 +1119,42 @@
              archive_failed: archiveFailed };
   }
 
+  // triggerOcr — force an OCR run now ("Read slip"), so a freshly-uploaded slip
+  // is reviewable without waiting for the hourly Action / a pipeline restart.
+  //   local  → POST /api/scan (kicks the background scan worker on the Mac).
+  //   github → workflow_dispatch the OCR Action on budget-code (needs the
+  //            Actions token). After this resolves, the caller polls loadDrafts
+  //            for the refreshed queue.
+  async function triggerOcr() {
+    if (MODE === 'local') {
+      var res = await fetch('/api/scan', { method: 'POST' });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'POST /api/scan: ' + res.status);
+      return data;
+    }
+    var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + CODE_REPO_NAME +
+              '/actions/workflows/' + OCR_WORKFLOW_FILE + '/dispatches';
+    var res2 = await ghFetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + getActionsToken(),
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ref: BRANCH }),
+    });
+    if (res2.status === 204) return { status: 'dispatched' };
+    if (res2.status === 401 || res2.status === 403) {
+      resetActionsToken();   // bad/expired token — re-prompt next tap
+      throw new Error('Actions token rejected (' + res2.status +
+                      '). It needs Actions: read+write on ' + CODE_REPO_NAME +
+                      '. Re-enter it on the next tap.');
+    }
+    var d = await res2.json().catch(function () { return {}; });
+    throw new Error('Dispatch failed: ' + res2.status + ' ' + (d.message || ''));
+  }
+
   // loadScanStatus — Mac-only (background OCR worker). Exported only in local
   // mode so review.html's `typeof DataSource.loadScanStatus === 'function'`
   // guard skips polling on the phone (drafts refresh hourly via the Action).
@@ -1128,8 +1196,10 @@
     loadDrafts:          loadDrafts,
     loadSlipImage:       loadSlipImage,
     submitReview:        submitReview,
+    triggerOcr:          triggerOcr,
 
     resetToken:          resetToken,
+    resetActionsToken:   resetActionsToken,
   };
 
   // Mac-only: drives the review page's "scanning… N of M" polling. Left off the
