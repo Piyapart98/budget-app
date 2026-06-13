@@ -106,6 +106,37 @@
   .settle-tag.settled{background:#e3f3e9;color:#1f7a44;}
   .settle-tag.pending{background:#fdf3e0;color:#a9700f;}
   .settle-tag.unsettled{background:#fdeaea;color:#b3373c;}
+
+  /* "Where it went" header with a Set-goal link */
+  .wiw-head{display:flex;justify-content:space-between;align-items:baseline;}
+  .set-goal-link{font-family:var(--serif);font-style:italic;font-size:16px;color:var(--green);
+                 cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .set-goal-link:active{opacity:.6;}
+
+  /* Goal-editor modal (Option A) */
+  .gmodal{position:fixed;inset:0;background:rgba(0,0,0,.42);display:none;align-items:center;
+          justify-content:center;z-index:60;padding:16px;}
+  .gmodal.open{display:flex;}
+  .gmodal-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;
+               width:100%;max-width:360px;max-height:82vh;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.2);}
+  .gmodal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .gmodal-head .t{font-family:var(--serif);font-size:18px;}
+  .gmodal-close{font-size:18px;color:var(--text-soft);cursor:pointer;line-height:1;padding:2px 8px;border-radius:6px;}
+  .gmodal-sub{font-size:11px;color:var(--text-faint);margin-bottom:10px;}
+  .gmrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;
+         border-top:1px solid var(--border);font-size:14px;}
+  .gmrow .gnm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .gmrow.total{border-top:2px solid var(--border);margin-top:6px;font-weight:600;}
+  .ginput{width:90px;font-size:14px;padding:7px 9px;border:1px solid #cfc8b8;border-radius:8px;background:#fff;
+          font-family:inherit;text-align:right;font-variant-numeric:tabular-nums;}
+  .gmact{display:flex;gap:8px;margin-top:16px;}
+  .gmact button{flex:1;border:none;border-radius:11px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;}
+  .gm-cancel{background:#f1efe8;color:var(--text-soft);}
+  .gm-save{background:var(--green);color:#fff;}
+  .gtoast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#33302a;color:#f5f4f0;
+          font-size:13px;padding:10px 16px;border-radius:999px;opacity:0;transition:opacity .25s;
+          pointer-events:none;z-index:70;white-space:nowrap;max-width:90%;text-align:center;}
+  .gtoast.show{opacity:.96;}
 </style>
 </head>
 <body>
@@ -154,9 +185,25 @@
     <div class="hm-stat" id="hm-stat"></div>
   </div>
 
-  <div class="section-title">Where it went</div>
+  <div class="section-title wiw-head"><span>Where it went</span>
+    <span class="set-goal-link" id="set-goal">set goal</span></div>
   <div id="cats"><div class="soft-note">Loading…</div></div>
 </div>
+
+<!-- Goal-editor modal (Option A) — simulated save, nothing is written. -->
+<div class="gmodal" id="gmodal" role="dialog" aria-modal="true" aria-label="Edit budget goals">
+  <div class="gmodal-card">
+    <div class="gmodal-head"><span class="t">Budget goals</span>
+      <span class="gmodal-close" id="gmodal-close" aria-label="Close">✕</span></div>
+    <div class="gmodal-sub">Mockup — changes update on screen only, nothing is saved.</div>
+    <div id="gmodal-rows"></div>
+    <div class="gmrow total"><span class="gnm">Monthly total</span>
+      <span>฿<input class="ginput" id="gm-total" inputmode="numeric"></span></div>
+    <div class="gmact"><button class="gm-cancel" id="gm-cancel">Cancel</button>
+      <button class="gm-save" id="gm-save">Save</button></div>
+  </div>
+</div>
+<div class="gtoast" id="gtoast"></div>
 
 <!-- Month picker modal — opened by tapping the month title. Tapping a chip
      re-renders in place (no reload). Mirrors the live report's picker. -->
@@ -188,7 +235,7 @@
   var HM_SHADES = ['#efe9dd','#f7dca6','#f0b95e','#e89a2c','#c9760f'];
   var ROONG = 'With Roong';
 
-  var rows = null, isIncome = null;
+  var rows = null, isIncome = null, goals = null;
   var settledSet = {}, pendingSet = {};   // settlement_id -> true
   var cur = new Date(); cur.setDate(1);
 
@@ -533,9 +580,50 @@
   document.getElementById('prev-year').addEventListener('click', function () { displayedYear -= 1; renderChips(); });
   document.getElementById('next-year').addEventListener('click', function () { displayedYear += 1; renderChips(); });
 
+  // ---- Goal-editor modal (Option A) — opened by the "set goal" link.
+  // Simulated: edits update the in-memory goals only; nothing is written
+  // (the mockup is read-only). A real version would add DataSource.saveGoals.
+  var gmodal = document.getElementById('gmodal');
+  var gtoastEl = document.getElementById('gtoast'), gtoastT = null;
+  function goalToast(msg) {
+    gtoastEl.textContent = msg; gtoastEl.classList.add('show');
+    clearTimeout(gtoastT); gtoastT = setTimeout(function () { gtoastEl.classList.remove('show'); }, 2400);
+  }
+  function buildGoalsModal() {
+    var cats = (goals && goals.categories) ? goals.categories : {};
+    var entries = Object.keys(cats).filter(function (c) { return !isIncome(c); })
+      .map(function (c) { return [c, cats[c]]; });
+    document.getElementById('gmodal-rows').innerHTML = entries.length ? entries.map(function (e) {
+      return '<div class="gmrow"><span class="gnm">' + Mock.catEmoji(e[0]) + ' ' +
+        Mock.escapeHtml(e[0]) + '</span><span>฿<input class="ginput" inputmode="numeric" data-cat="' +
+        Mock.escapeHtml(e[0]) + '" value="' + (parseInt(e[1], 10) || 0) + '"></span></div>';
+    }).join('') : '<div class="soft-note">No category goals found.</div>';
+    document.getElementById('gm-total').value = (goals && parseInt(goals.monthly_total, 10)) || 0;
+  }
+  function openGoals() { if (!goals) return; buildGoalsModal(); gmodal.classList.add('open'); }
+  function closeGoals() { gmodal.classList.remove('open'); }
+  document.getElementById('set-goal').addEventListener('click', openGoals);
+  document.getElementById('gmodal-close').addEventListener('click', closeGoals);
+  document.getElementById('gm-cancel').addEventListener('click', closeGoals);
+  gmodal.addEventListener('click', function (e) { if (e.target === gmodal) closeGoals(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && gmodal.classList.contains('open')) closeGoals();
+  });
+  document.getElementById('gm-save').addEventListener('click', function () {
+    Array.prototype.forEach.call(gmodal.querySelectorAll('[data-cat]'), function (inp) {
+      var v = parseInt(inp.value, 10);
+      if (!isNaN(v) && v >= 0 && goals.categories) goals.categories[inp.getAttribute('data-cat')] = v;
+    });
+    var t = parseInt(document.getElementById('gm-total').value, 10);
+    if (!isNaN(t) && t >= 0) goals.monthly_total = t;
+    closeGoals();
+    goalToast('Goals updated on screen · nothing is saved');
+  });
+
   (async function () {
     try {
       var cfgP = DataSource.loadConfig().catch(function () { return null; });
+      var goalsP = DataSource.loadGoals().catch(function () { return {}; });
       // Roong settlement status — read-only, best-effort. Empty sets => rows
       // fall back to "Unsettled", matching the live page's behavior.
       var roongP = Promise.all([
@@ -548,6 +636,7 @@
 
       rows = await DataSource.loadDatabase();
       isIncome = Mock.incomeTester(await cfgP);
+      goals = await goalsP;
       await roongP;
       render();
     } catch (e) {
