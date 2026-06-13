@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Review</title>
-<!-- warm-journal review v1.2 — Read slip (2026-06-13) -->
+<!-- warm-journal review v1.3 — income +sign (2026-06-13) -->
 <link rel="stylesheet" href="warm.css">
 <style>
   .topbar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
@@ -153,6 +153,10 @@
         'Provident Fund','Mutual Fund','Coop Account','Saving for EOY Tax Deduction',
         'Interest payment'] },
   ];
+  // Income/Savings categories are inflows → "+" in the submit feed; spending → "−".
+  var INCOME_CATS = {};
+  CAT_GROUPS[1].items.forEach(function (c) { INCOME_CATS[c] = true; });
+  function isIncomeCat(c) { return !!INCOME_CATS[(c || '').trim()]; }
 
   var slips = [], cursor = 0, decisions = [], curSrc = null;
   var stage = document.getElementById('stage');
@@ -394,7 +398,8 @@
             Mock.catEmoji(d.slip.chosen) + '</span><span class="feed-desc">' +
             Mock.escapeHtml(d.slip.edit.Description || d.slip.filename) +
             ' <span class="feed-sub">' + Mock.escapeHtml(d.slip.chosen) + '</span></span></div>' +
-            '<span class="feed-amt">−' + Mock.fmtBaht(d.slip.edit.Amount) + '</span></div>';
+            '<span class="feed-amt">' + (isIncomeCat(d.slip.chosen) ? '+' : '−') +
+            Mock.fmtBaht(d.slip.edit.Amount) + '</span></div>';
         }).join('') + '</div></div>';
     document.getElementById('progress').textContent = '';
   }
