@@ -7,9 +7,35 @@
 <title>Report — new design</title>
 <link rel="stylesheet" href="mock.css">
 <style>
-  .month-nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
-  .month-nav button{background:none;border:none;font-size:20px;color:var(--text-faint);
-                    cursor:pointer;padding:4px 10px;}
+  /* Month picker — arrows + tappable title that opens a month-grid modal,
+     mirroring the live report. */
+  .picker-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
+  .picker-arrow{background:var(--bg);border:1px solid var(--border);border-radius:8px;width:36px;height:36px;
+                display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--text-soft);
+                cursor:pointer;-webkit-tap-highlight-color:transparent;padding:0;flex-shrink:0;}
+  .picker-arrow:active{background:#ece8df;}
+  .picker-title-btn{flex:1;font-family:var(--serif);font-size:24px;font-weight:400;text-align:center;
+                    background:transparent;border:none;color:var(--text);cursor:pointer;padding:4px 8px;
+                    -webkit-tap-highlight-color:transparent;}
+  .picker-title-btn .picker-chev{font-size:11px;color:var(--text-faint);margin-left:6px;vertical-align:3px;}
+  .picker-modal{position:fixed;inset:0;background:rgba(0,0,0,0.42);display:none;align-items:center;
+                justify-content:center;z-index:50;padding:16px;}
+  .picker-modal.open{display:flex;}
+  .picker-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;
+               width:100%;max-width:340px;box-shadow:0 8px 30px rgba(0,0,0,.18);}
+  .picker-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+  .picker-head .t{font-family:var(--serif);font-size:16px;}
+  .picker-close{font-size:18px;color:var(--text-soft);cursor:pointer;line-height:1;padding:2px 8px;border-radius:6px;}
+  .picker-close:active{background:var(--bg);}
+  .picker-year{display:flex;align-items:center;justify-content:space-between;font-size:13px;
+               color:var(--text-soft);margin-bottom:12px;}
+  .picker-year .yr{font-weight:600;color:var(--text);font-size:15px;}
+  .picker-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;}
+  .month-chip{font-size:12px;text-align:center;padding:10px 0;background:var(--bg);border:1px solid var(--border);
+              border-radius:9px;color:var(--text-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .month-chip:active{background:var(--surface);}
+  .month-chip.current{background:var(--green-soft);border-color:var(--green);color:var(--green);font-weight:600;}
+  .month-chip.empty{opacity:.45;color:var(--text-faint);}
   .story{font-size:14px;color:var(--text-soft);line-height:1.55;margin:6px 0 14px;}
   .story b{color:var(--text);}
   .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
@@ -85,8 +111,10 @@
 <body>
 <div class="wrap">
   <a class="back-link" href="index.html">‹ Home</a>
-  <div class="month-nav">
-    <button id="prev">‹</button><h1 id="month-label">…</h1><button id="next">›</button>
+  <div class="picker-row">
+    <button class="picker-arrow" id="prev" aria-label="Previous month">‹</button>
+    <button class="picker-title-btn" id="month-label-btn">… <span class="picker-chev">▼</span></button>
+    <button class="picker-arrow" id="next" aria-label="Next month">›</button>
   </div>
   <div class="story" id="story">Loading…</div>
   <div class="tiles">
@@ -128,6 +156,23 @@
 
   <div class="section-title">Where it went</div>
   <div id="cats"><div class="soft-note">Loading…</div></div>
+</div>
+
+<!-- Month picker modal — opened by tapping the month title. Tapping a chip
+     re-renders in place (no reload). Mirrors the live report's picker. -->
+<div class="picker-modal" id="picker-modal" role="dialog" aria-modal="true" aria-label="Select month">
+  <div class="picker-card">
+    <div class="picker-head">
+      <div class="t">Select month</div>
+      <div class="picker-close" id="picker-close" aria-label="Close">✕</div>
+    </div>
+    <div class="picker-year">
+      <button class="picker-arrow" id="prev-year" aria-label="Previous year">‹</button>
+      <span class="yr" id="picker-year-label">2026</span>
+      <button class="picker-arrow" id="next-year" aria-label="Next year">›</button>
+    </div>
+    <div class="picker-grid" id="picker-month-chips"></div>
+  </div>
 </div>
 
 <script src="../data-source.js"></script>
@@ -173,7 +218,8 @@
 
   function render() {
     var mk = key(cur);
-    document.getElementById('month-label').textContent = label(cur);
+    document.getElementById('month-label-btn').innerHTML =
+      Mock.escapeHtml(label(cur)) + ' <span class="picker-chev">▼</span>';
     var t = totalsFor(mk);
     var prev = totalsFor(key(shiftMonth(cur, -1)));
     var ranked = Object.keys(t.byCat).map(function (c) { return [c, t.byCat[c]]; })
@@ -438,6 +484,54 @@
   document.getElementById('next').addEventListener('click', function () {
     if (rows) { cur = shiftMonth(cur, 1); render(); }
   });
+
+  // ---- Month picker modal (tap the title to jump to any month) ----
+  var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var modal = document.getElementById('picker-modal');
+  var yearLabel = document.getElementById('picker-year-label');
+  var chipsEl = document.getElementById('picker-month-chips');
+  var displayedYear = cur.getFullYear();
+
+  // Months that have at least one non-deleted row — faded chip = "no data yet".
+  function monthsWithData() {
+    var set = {};
+    (rows || []).forEach(function (r) {
+      if (Mock.isDeleted(r)) return;
+      var mk = Mock.monthKey(r.Date);
+      if (mk.length >= 7) set[mk] = true;
+    });
+    return set;
+  }
+  function renderChips() {
+    var has = monthsWithData();
+    yearLabel.textContent = displayedYear;
+    chipsEl.innerHTML = '';
+    for (var m = 1; m <= 12; m++) {
+      var ym = displayedYear + '-' + String(m).padStart(2, '0');
+      var isCurrent = displayedYear === cur.getFullYear() && (m - 1) === cur.getMonth();
+      var chip = document.createElement('button');
+      chip.className = 'month-chip' + (isCurrent ? ' current' : (!has[ym] ? ' empty' : ''));
+      chip.textContent = MONTH_NAMES[m - 1];
+      (function (mm) {
+        chip.addEventListener('click', function () {
+          cur = new Date(displayedYear, mm - 1, 1);
+          render();
+          closePicker();
+        });
+      })(m);
+      chipsEl.appendChild(chip);
+    }
+  }
+  function openPicker() { if (!rows) return; displayedYear = cur.getFullYear(); renderChips(); modal.classList.add('open'); }
+  function closePicker() { modal.classList.remove('open'); }
+  document.getElementById('month-label-btn').addEventListener('click', openPicker);
+  document.getElementById('picker-close').addEventListener('click', closePicker);
+  modal.addEventListener('click', function (e) { if (e.target === modal) closePicker(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closePicker();
+  });
+  document.getElementById('prev-year').addEventListener('click', function () { displayedYear -= 1; renderChips(); });
+  document.getElementById('next-year').addEventListener('click', function () { displayedYear += 1; renderChips(); });
 
   (async function () {
     try {
