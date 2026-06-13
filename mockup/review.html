@@ -19,7 +19,7 @@
   .slip-card.springback{transition:transform .25s cubic-bezier(.2,.8,.3,1);}
 
   .slip-img{width:100%;height:34vh;max-height:280px;object-fit:contain;background:#f4f1ea;
-    border-radius:12px;display:block;}
+    border-radius:12px;display:block;cursor:zoom-in;}
   .slip-img.empty{display:flex;align-items:center;justify-content:center;color:var(--text-faint);
     font-size:12px;text-align:center;padding:18px;}
 
@@ -89,6 +89,12 @@
   .done-list{text-align:left;margin-top:18px;}
   .replay{margin-top:18px;background:none;border:1px solid var(--border);border-radius:10px;
     padding:9px 16px;font-size:13px;color:var(--text-soft);cursor:pointer;font-family:var(--sans);}
+
+  /* lightbox — tap the slip image to expand (same as the live page) */
+  .lightbox{position:fixed;inset:0;background:rgba(20,18,14,.92);z-index:60;display:none;
+    align-items:center;justify-content:center;padding:20px;cursor:zoom-out;}
+  .lightbox.open{display:flex;}
+  .lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;}
 </style>
 </head>
 <body>
@@ -107,6 +113,8 @@
   <h3>Choose a category</h3>
   <div id="sheet-grid"></div>
 </div>
+
+<div class="lightbox" id="lightbox"><img id="lightbox-img" alt=""></div>
 
 <div class="submit-bar" id="submit-bar">
   <button class="submit-btn" id="submit-btn">Submit</button>
@@ -130,9 +138,17 @@
         'Interest payment'] },
   ];
 
-  var slips = [], cursor = 0, decisions = [];
+  var slips = [], cursor = 0, decisions = [], curSrc = null;
   var stage = document.getElementById('stage');
   var sheetBd = document.getElementById('sheet-bd'), sheet = document.getElementById('sheet');
+  var lightbox = document.getElementById('lightbox');
+
+  function openLightbox() {
+    if (!curSrc) return;
+    document.getElementById('lightbox-img').src = curSrc;
+    lightbox.classList.add('open');
+  }
+  lightbox.addEventListener('click', function () { lightbox.classList.remove('open'); });
 
   function fieldVal(slip, key) {
     var f = (slip.fields || {})[key];
@@ -163,10 +179,13 @@
         '</div>' +
       '</div>';
 
+    curSrc = null;
     DataSource.loadSlipImage(s).then(function (src) {
       var img = document.getElementById('slip-img');
-      if (img && src) img.src = src;
-      else if (img) { img.classList.add('empty'); img.outerHTML =
+      if (img && src) {
+        img.src = src; curSrc = src;
+        img.addEventListener('click', function (e) { e.stopPropagation(); openLightbox(); });
+      } else if (img) { img.classList.add('empty'); img.outerHTML =
         '<div class="slip-img empty" id="slip-img">' + Mock.escapeHtml(s.filename || 'no image') + '</div>'; }
     }).catch(function () {});
 
