@@ -113,6 +113,21 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 /* Toast */
 .toast{position:fixed;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);left:50%;transform:translateX(-50%);background:#1a1a18;color:#f5f4f0;font-size:13px;padding:9px 18px;border-radius:999px;z-index:999;opacity:0;transition:opacity .2s;white-space:nowrap;pointer-events:none}
 .toast.show{opacity:1}
+
+/* How-to process panel (static, always visible) */
+.howto{max-width:520px;margin:14px auto 0;padding:0 14px}
+.howto-card{background:#fff;border:0.5px solid #e0e0d8;border-radius:12px;padding:14px 16px}
+.howto-title{font-size:14px;font-weight:600;margin-bottom:2px}
+.howto-sub{font-size:12px;color:#888;margin-bottom:12px}
+.howto-part{font-size:12px;font-weight:600;color:#3b6d11;letter-spacing:.3px;text-transform:uppercase;margin:12px 0 6px}
+.howto-part:first-of-type{margin-top:0}
+.howto ol{margin:0 0 0 18px;padding:0}
+.howto li{font-size:13px;line-height:1.5;margin-bottom:6px}
+.howto code{background:#f4f4f1;border:0.5px solid #e8e8e2;border-radius:5px;padding:1px 5px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+.howto .hint{font-size:12px;color:#888}
+.howto-buckets{list-style:none;margin:0;padding:0}
+.howto-buckets li{margin-bottom:5px}
+.howto-tip{font-size:12px;color:#666;background:#f9f9f5;border:0.5px solid #eee;border-radius:8px;padding:8px 10px;margin-top:12px;line-height:1.5}
 </style>
 </head>
 <body>
@@ -129,6 +144,41 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     <div class="tabs" id="tab-bar">
       <!-- filled by JS -->
     </div>
+  </div>
+</div>
+
+<div class="howto">
+  <div class="howto-card">
+    <div class="howto-title">📋 How to verify statements each month</div>
+    <div class="howto-sub">Do this once a month, after your card statements come out.</div>
+
+    <div class="howto-part">Part 1 — On your Mac (do this first)</div>
+    <ol>
+      <li>Download each card's statement PDF: <b>KTC</b> (••2288), <b>JCB</b> (••6350), <b>Lotus's</b> (••6313).</li>
+      <li>Put the PDFs in the <code>01_inbox/statements/</code> folder. Keep the card's last-4 in the filename (e.g. <code>KTC_2288_May.pdf</code>).</li>
+      <li>Open Terminal in the project folder and run:<br><code>source .venv/bin/activate &amp;&amp; python 00_Code/run_pipeline.py</code><br><span class="hint">Passwords for locked PDFs are read from your Mac Keychain automatically — nothing to type.</span></li>
+      <li>Once it starts up, the verification is ready.</li>
+    </ol>
+
+    <div class="howto-part">Part 2 — Review (Mac or phone)</div>
+    <ol>
+      <li>Open this page. The date stamp at the top shows when your Mac last ran.</li>
+      <li>For each card tab, clear the badges:
+        <ul class="howto-buckets">
+          <li>🔴 <b>Missing in DB</b> — on the statement but not recorded → <b>Add to DB</b> (or Skip).</li>
+          <li>🟠 <b>Not on statement</b> — recorded but not on the statement → <b>Mark as OK</b>, or <b>Delete</b> with a reason.</li>
+          <li>✅ <b>Matched</b> — already lines up, nothing to do.</li>
+        </ul>
+      </li>
+    </ol>
+
+    <div class="howto-part">Part 3 — Finish (Mac only)</div>
+    <ol>
+      <li>Back on the Mac, tap <b>"Archive statement"</b> on each card to move its PDF out of the inbox. <span class="hint">(This button is hidden on the phone — it's a Mac-only step.)</span></li>
+      <li>Done — the card is reconciled for the month.</li>
+    </ol>
+
+    <div class="howto-tip">💡 If you added or deleted rows on your phone, re-run <code>run_pipeline.py</code> on the Mac to refresh the match list.</div>
   </div>
 </div>
 
