@@ -198,7 +198,7 @@
     <div class="gmodal-sub">Mockup — changes update on screen only, nothing is saved.</div>
     <div id="gmodal-rows"></div>
     <div class="gmrow total"><span class="gnm">Monthly total</span>
-      <span>฿<input class="ginput" id="gm-total" inputmode="numeric"></span></div>
+      <span id="gm-total" style="font-variant-numeric:tabular-nums">฿0</span></div>
     <div class="gmact"><button class="gm-cancel" id="gm-cancel">Cancel</button>
       <button class="gm-save" id="gm-save">Save</button></div>
   </div>
@@ -589,6 +589,14 @@
     gtoastEl.textContent = msg; gtoastEl.classList.add('show');
     clearTimeout(gtoastT); gtoastT = setTimeout(function () { gtoastEl.classList.remove('show'); }, 2400);
   }
+  // Monthly total = live sum of the category inputs (non-editable).
+  function updateGoalTotal() {
+    var sum = 0;
+    Array.prototype.forEach.call(gmodal.querySelectorAll('[data-cat]'), function (inp) {
+      var v = parseInt(inp.value, 10); if (!isNaN(v) && v >= 0) sum += v;
+    });
+    document.getElementById('gm-total').textContent = Mock.fmtBaht(sum);
+  }
   function buildGoalsModal() {
     var cats = (goals && goals.categories) ? goals.categories : {};
     var entries = Object.keys(cats).filter(function (c) { return !isIncome(c); })
@@ -598,8 +606,9 @@
         Mock.escapeHtml(e[0]) + '</span><span>฿<input class="ginput" inputmode="numeric" data-cat="' +
         Mock.escapeHtml(e[0]) + '" value="' + (parseInt(e[1], 10) || 0) + '"></span></div>';
     }).join('') : '<div class="soft-note">No category goals found.</div>';
-    document.getElementById('gm-total').value = (goals && parseInt(goals.monthly_total, 10)) || 0;
+    updateGoalTotal();
   }
+  document.getElementById('gmodal-rows').addEventListener('input', updateGoalTotal);
   function openGoals() { if (!goals) return; buildGoalsModal(); gmodal.classList.add('open'); }
   function closeGoals() { gmodal.classList.remove('open'); }
   document.getElementById('set-goal').addEventListener('click', openGoals);
@@ -610,12 +619,14 @@
     if (e.key === 'Escape' && gmodal.classList.contains('open')) closeGoals();
   });
   document.getElementById('gm-save').addEventListener('click', function () {
+    var sum = 0;
     Array.prototype.forEach.call(gmodal.querySelectorAll('[data-cat]'), function (inp) {
       var v = parseInt(inp.value, 10);
-      if (!isNaN(v) && v >= 0 && goals.categories) goals.categories[inp.getAttribute('data-cat')] = v;
+      if (!isNaN(v) && v >= 0 && goals.categories) {
+        goals.categories[inp.getAttribute('data-cat')] = v; sum += v;
+      }
     });
-    var t = parseInt(document.getElementById('gm-total').value, 10);
-    if (!isNaN(t) && t >= 0) goals.monthly_total = t;
+    goals.monthly_total = sum;   // monthly total is the sum of category goals
     closeGoals();
     goalToast('Goals updated on screen · nothing is saved');
   });
