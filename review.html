@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Review</title>
-<!-- warm-journal review v1 (2026-06-13) -->
+<!-- warm-journal review v1.1 — Skip button (2026-06-13) -->
 <link rel="stylesheet" href="warm.css">
 <style>
   .topbar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
@@ -182,7 +182,7 @@
         '<div class="edit-hint">Tap a field above to fix it.</div>' +
         catHtml(s) +
         '<div class="actions">' +
-          '<button class="btn btn-ghost" id="reject">Reject</button>' +
+          '<button class="btn btn-ghost" id="skip">Skip</button>' +
           '<button class="btn btn-green btn-ok" id="ok">Looks right ✓</button>' +
         '</div>' +
       '</div>';
@@ -282,13 +282,20 @@
       decisions.push({ slip: s, kind: kind });
       var card = document.getElementById('card');
       card.classList.add('flyout');
-      var w = window.innerWidth, dir = kind === 'ok' ? 1 : -1;
-      card.style.transform = 'translateX(' + (dir * (w + 140)) + 'px) rotate(' + (dir * 16) + 'deg)';
+      if (kind === 'skip') {
+        // Set aside — slide the card down. Skip is "pending": the slip stays in
+        // the queue (never submitted), to revisit after the batch.
+        card.style.transform = 'translateY(' + (window.innerHeight * 0.6 + 140) + 'px)';
+      } else {
+        var w = window.innerWidth, dir = kind === 'ok' ? 1 : -1;
+        card.style.transform = 'translateX(' + (dir * (w + 140)) + 'px) rotate(' + (dir * 16) + 'deg)';
+      }
       card.style.opacity = '0';
       setTimeout(function () { cursor++; render(); }, 300);
     }
     document.getElementById('ok').addEventListener('click', function () { go('ok'); });
-    document.getElementById('reject').addEventListener('click', function () { go('reject'); });
+    document.getElementById('skip').addEventListener('click', function () { go('skip'); });
+    // Swipe left still = reject (REJECTED_ prefix); the Skip button is separate.
     stage._go = go;
   }
 
@@ -335,7 +342,8 @@
   function renderDone() {
     var bar = document.getElementById('submit-bar');
     var ok = decisions.filter(function (d) { return d.kind === 'ok'; });
-    var rejected = decisions.length - ok.length;
+    var rejected = decisions.filter(function (d) { return d.kind === 'reject'; });
+    var skipped = decisions.filter(function (d) { return d.kind === 'skip'; });
 
     if (!decisions.length) {
       stage.innerHTML = '<div class="slip-card done-box"><h2>Inbox zero ✨</h2>' +
@@ -344,18 +352,34 @@
       return;
     }
 
-    bar.classList.add('show');
-    document.getElementById('submit-note').textContent =
-      ok.length + ' to submit · ' + rejected + ' rejected';
-    document.getElementById('submit-btn').textContent =
-      'Submit ' + ok.length + ' slip' + (ok.length === 1 ? '' : 's');
-    document.getElementById('submit-btn').onclick = function () { submit(ok.length, rejected); };
+    // Skipped slips are never submitted — they stay in the queue. Only confirmed
+    // + rejected are actionable, so the Submit bar shows only when there's one.
+    var actionable = ok.length + rejected.length;
+    var skipNote = skipped.length ? ' · ' + skipped.length + ' skipped (stays in queue)' : '';
+
+    if (actionable) {
+      bar.classList.add('show');
+      document.getElementById('submit-note').textContent =
+        ok.length + ' to submit · ' + rejected.length + ' rejected' + skipNote;
+      document.getElementById('submit-btn').textContent =
+        'Submit ' + ok.length + ' slip' + (ok.length === 1 ? '' : 's');
+      document.getElementById('submit-btn').onclick = function () { submit(ok.length, rejected.length); };
+    } else {
+      bar.classList.remove('show');
+    }
+
+    var sub = actionable
+      ? ('You confirmed <b>' + ok.length + '</b>, rejected <b>' + rejected.length + '</b>' +
+         (skipped.length ? ', skipped <b>' + skipped.length + '</b>' : '') + '. ' +
+         'Nothing is saved yet — review below, then tap <b>Submit</b>. ' +
+         'It writes only on Submit — never auto-pushes.' +
+         (skipped.length ? ' Skipped slips stay in your queue to revisit.' : ''))
+      : ('You skipped <b>' + skipped.length + '</b> slip' + (skipped.length === 1 ? '' : 's') +
+         ' — they stay in your queue. Nothing to submit; reload to revisit them.');
 
     stage.innerHTML =
-      '<div class="slip-card done-box"><h2>Ready to submit</h2>' +
-        '<div class="sub">You confirmed <b>' + ok.length + '</b> and rejected <b>' + rejected + '</b>. ' +
-        'Nothing is saved yet — review below, then tap <b>Submit</b>. ' +
-        'It writes only on Submit — never auto-pushes.</div>' +
+      '<div class="slip-card done-box"><h2>' + (actionable ? 'Ready to submit' : 'All skipped') + '</h2>' +
+        '<div class="sub">' + sub + '</div>' +
         '<div class="done-list">' + ok.map(function (d) {
           return '<div class="feed-row"><div class="feed-left"><span>' +
             Mock.catEmoji(d.slip.chosen) + '</span><span class="feed-desc">' +
@@ -389,7 +413,11 @@
     btn.disabled = true;
     window.addEventListener('beforeunload', blockUnload);
 
-    var decs = decisions.map(function (d) {
+    // Skipped slips are deliberately left out of the payload: not confirmed, not
+    // rejected. Excluding them means both submitReview (github) and
+    // commit_decisions (local) leave their drafts untouched, so they stay in the
+    // queue to revisit after this batch.
+    var decs = decisions.filter(function (d) { return d.kind !== 'skip'; }).map(function (d) {
       var s = d.slip;
       var dec = {
         id: s.id, slip_path: s.slip_path, filename: s.filename,
@@ -419,10 +447,12 @@
       var r = (data && data.rejected  != null) ? data.rejected  : rejected;
       var extra = (data && data.archive_failed)
         ? ' · ' + data.archive_failed + ' image(s) left in inbox (harmless)' : '';
+      var sk = decisions.filter(function (d) { return d.kind === 'skip'; }).length;
+      var skTxt = sk ? ' · <b>' + sk + '</b> still in your queue' : '';
       stage.innerHTML =
         '<div class="slip-card done-box"><h2>Submitted 🎉</h2>' +
           '<div class="sub"><b>' + c + '</b> row' + (c === 1 ? '' : 's') +
-          ' committed · <b>' + r + '</b> rejected' + extra + '.</div></div>';
+          ' committed · <b>' + r + '</b> rejected' + skTxt + extra + '.</div></div>';
       document.getElementById('progress').textContent = '';
     } catch (e) {
       window.removeEventListener('beforeunload', blockUnload);
