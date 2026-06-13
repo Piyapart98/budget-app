@@ -328,6 +328,36 @@
     return got.content ? JSON.parse(got.content) : {};
   }
 
+  // saveGoals — persist the monthly budget goals. The monthly_total is always
+  // recomputed as the sum of the category goals (never trusted from the
+  // caller). Local: POST /api/goals (Flask recomputes + writes goals.json).
+  // GitHub: read goals.json, overlay the new categories onto whatever is there
+  // (preserving any other keys), recompute the total, and PUT it back.
+  async function saveGoals(goals) {
+    var cats = (goals && goals.categories) ? goals.categories : {};
+    if (MODE === 'local') {
+      var res = await fetch('/api/goals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categories: cats }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+      return data;
+    }
+    var got = await ghGet('goals.json');
+    var merged = got.content ? JSON.parse(got.content) : {};
+    merged.categories = Object.assign({}, merged.categories || {}, cats);
+    var total = 0;
+    Object.keys(merged.categories).forEach(function (k) {
+      total += Number(merged.categories[k]) || 0;
+    });
+    merged.monthly_total = total;
+    await ghPut('goals.json', JSON.stringify(merged, null, 2), got.sha,
+                'edit goals from phone');
+    return merged;
+  }
+
   async function loadConfig() {
     if (MODE === 'local') {
       var res = await fetch('/api/config');
@@ -1080,6 +1110,7 @@
     loadDatabase:        loadDatabase,
     loadChangelog:       loadChangelog,
     loadGoals:           loadGoals,
+    saveGoals:           saveGoals,
     loadConfig:          loadConfig,
     loadVerification:    loadVerification,
     archiveStatement:    archiveStatement,
