@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Monthly Report</title>
-<!-- warm-journal v1 (2026-06-13) -->
+<!-- warm-journal monthly v1.1 — Income block (2026-06-13) -->
 <link rel="stylesheet" href="warm.css">
 <style>
   /* Month picker — arrows + tappable title that opens a month-grid modal,
@@ -186,6 +186,9 @@
     <div class="hm-stat" id="hm-stat"></div>
   </div>
 
+  <div class="section-title">Income</div>
+  <div id="income"></div>
+
   <div class="section-title wiw-head"><span>Where it went</span>
     <span class="set-goal-link" id="set-goal">set goal</span></div>
   <div id="cats"><div class="soft-note">Loading…</div></div>
@@ -233,6 +236,7 @@
   // following the house BBC-style palette (highlight one, gray the rest).
   var AMBER = '#EF9F27';
   var GRAYS = ['#8f897a','#9c9687','#a9a394','#b6b0a1','#c3bdae','#D3D1C7'];
+  var INCOME_GREEN = '#1a6b3c';   // matches the trend's Income line/legend
   var HM_SHADES = ['#efe9dd','#f7dca6','#f0b95e','#e89a2c','#c9760f'];
   var ROONG = 'With Roong';
 
@@ -300,6 +304,7 @@
     renderShare(t, ranked);
     renderTrend();
     renderHeatmap();
+    renderIncome(t);
     renderWhereItWent(t, ranked);
   }
 
@@ -480,6 +485,38 @@
       stat.innerHTML = 'Busiest day: <b>' + bd + ' · ' + Mock.fmtBaht(busiest.v) + '</b> · ' +
                        zeroDays + ' no-spend days';
     } else { stat.textContent = 'No spending in this window.'; }
+  }
+
+  // ---- Income: one green expandable row listing the month's income entries ----
+  function renderIncome(t) {
+    var wrap = document.getElementById('income');
+    var mk = key(cur);
+    var entries = rows.filter(function (r) {
+      return !Mock.isDeleted(r) && Mock.monthKey(r.Date) === mk && isIncome(r.Category);
+    }).sort(function (a, b) { return String(a.Date) < String(b.Date) ? -1 : 1; });
+
+    var entriesHtml = entries.length ? entries.map(function (r) {
+      var d = new Date(r.Date);
+      var ds = isNaN(d) ? Mock.escapeHtml(r.Date || '') :
+        d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      var desc = (r.Description || r.Note || '').trim() || '(no description)';
+      return '<div class="entry"><span class="ed">' + ds + '</span>' +
+        '<span class="en">' + Mock.escapeHtml(desc) + '</span>' +
+        '<span class="ea">' + Mock.fmtBaht(r.Amount) + '</span></div>';
+    }).join('') : '<div class="entry empty">No income this month</div>';
+
+    var row = document.createElement('div');
+    row.className = 'cat-row';
+    row.innerHTML =
+      '<div class="cat-head"><span class="cat-name">💰 <span class="nm">Income</span></span>' +
+      '<span class="cat-right" style="color:' + INCOME_GREEN + '">' + Mock.fmtBaht(t.income) +
+      ' <span class="chev">▶</span></span></div>' +
+      '<div class="cat-track"><div class="cat-fill" style="width:100%;background:' +
+      INCOME_GREEN + '"></div></div>' +
+      '<div class="entries">' + entriesHtml + '</div>';
+    row.addEventListener('click', function () { row.classList.toggle('open'); });
+    wrap.innerHTML = '';
+    wrap.appendChild(row);
   }
 
   // ---- Part 4: expandable "where it went" with Roong status ----
