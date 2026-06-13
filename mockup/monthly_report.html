@@ -279,6 +279,7 @@
     var ip = income.map(function (val, i) { return { x: X(i), y: Y(val) }; });
     var spPath = smoothPath(sp), ipPath = smoothPath(ip);
     var spArea = spPath + 'L' + sp[N - 1].x + ',' + yB + 'L' + sp[0].x + ',' + yB + 'Z';
+    var ipArea = ipPath + 'L' + ip[N - 1].x + ',' + yB + 'L' + ip[0].x + ',' + yB + 'Z';
 
     var grid = ticks.map(function (val) {
       var y = Y(val);
@@ -292,8 +293,12 @@
       '<svg width="' + W + '" height="' + H + '">' +
       '<defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1">' +
       '<stop offset="0" stop-color="' + AMBER + '" stop-opacity="0.18"/>' +
-      '<stop offset="1" stop-color="' + AMBER + '" stop-opacity="0"/></linearGradient></defs>' +
+      '<stop offset="1" stop-color="' + AMBER + '" stop-opacity="0"/></linearGradient>' +
+      '<linearGradient id="tg-inc" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#1a6b3c" stop-opacity="0.16"/>' +
+      '<stop offset="1" stop-color="#1a6b3c" stop-opacity="0"/></linearGradient></defs>' +
       grid +
+      '<path d="' + ipArea + '" fill="url(#tg-inc)"/>' +
       '<path d="' + spArea + '" fill="url(#tg)"/>' +
       '<path d="' + ipPath + '" fill="none" stroke="#1a6b3c" stroke-width="2.5" ' +
       'stroke-linecap="round" stroke-linejoin="round"/>' +
