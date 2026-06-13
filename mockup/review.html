@@ -66,6 +66,9 @@
     max-height:72vh;overflow-y:auto;}
   .sheet.open{transform:translateY(0);}
   .sheet h3{font-family:var(--serif);font-weight:400;font-size:18px;margin-bottom:12px;}
+  .cat-group-label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--text-faint);margin:14px 2px 8px;}
+  .cat-group-label:first-child{margin-top:0;}
   .cat-grid{display:flex;flex-wrap:wrap;gap:7px;}
   .cchip{display:inline-flex;align-items:center;gap:6px;background:#f1efe8;color:var(--text-soft);
     border:1px solid transparent;border-radius:999px;font-size:13px;padding:8px 13px;cursor:pointer;}
@@ -102,7 +105,7 @@
 <div class="sheet-bd" id="sheet-bd"></div>
 <div class="sheet" id="sheet">
   <h3>Choose a category</h3>
-  <div class="cat-grid" id="sheet-grid"></div>
+  <div id="sheet-grid"></div>
 </div>
 
 <div class="submit-bar" id="submit-bar">
@@ -117,10 +120,15 @@
 // called — no write methods of any kind. "Submit" is simulated; nothing is saved.
 (function () {
   'use strict';
-  // Must match review.html CAT_GROUPS (Spending list shown in the picker).
-  var CATS = ['Food','Drinks and Snacks','Transport','Health / Necessaries','Shopping',
-    'Groceries','Utilities and Subs','Sports','Social Expenses / Donation',
-    'With Roong','To Mom','Other'];
+  // Must match review.html CAT_GROUPS (both Spending and Income/Savings shown).
+  var CAT_GROUPS = [
+    { group: 'Spending', items: ['Food','Drinks and Snacks','Transport','Health / Necessaries',
+        'Shopping','Groceries','Utilities and Subs','Sports','Social Expenses / Donation',
+        'With Roong','To Mom','Other'] },
+    { group: 'Income / Savings', items: ['Salary','Bonus','Reimbursement','Payback from someone',
+        'Provident Fund','Mutual Fund','Coop Account','Saving for EOY Tax Deduction',
+        'Interest payment'] },
+  ];
 
   var slips = [], cursor = 0, decisions = [];
   var stage = document.getElementById('stage');
@@ -214,9 +222,13 @@
       Mock.escapeHtml(s.chosen) + '</span></div>';
   }
   function gridChips(s) {
-    return CATS.map(function (c) {
-      return '<span class="cchip' + (c === s.chosen ? ' on' : '') + '" data-c="' +
-        Mock.escapeHtml(c) + '">' + Mock.catEmoji(c) + ' ' + Mock.escapeHtml(c) + '</span>';
+    return CAT_GROUPS.map(function (g) {
+      var chips = g.items.map(function (c) {
+        return '<span class="cchip' + (c === s.chosen ? ' on' : '') + '" data-c="' +
+          Mock.escapeHtml(c) + '">' + Mock.catEmoji(c) + ' ' + Mock.escapeHtml(c) + '</span>';
+      }).join('');
+      return '<div class="cat-group-label">' + Mock.escapeHtml(g.group) + '</div>' +
+        '<div class="cat-grid">' + chips + '</div>';
     }).join('');
   }
   function wireCat(s) {
