@@ -94,8 +94,12 @@
       story = "You've spent <b>" + Mock.fmtBaht(t.spent) + '</b>';
       if (prev.spent > 0) {
         var diff = t.spent - prev.spent;
-        story += ' — about <b>' + Mock.fmtBaht(Math.abs(diff)) + ' ' +
-                 (diff <= 0 ? 'less' : 'more') + '</b> than last month';
+        if (Math.round(diff) === 0) {
+          story += ' — <b>about the same</b> as last month';
+        } else {
+          story += ' — about <b>' + Mock.fmtBaht(Math.abs(diff)) + ' ' +
+                   (diff < 0 ? 'less' : 'more') + '</b> than last month';
+        }
       }
       if (ranked.length) {
         story += '. ' + Mock.catEmoji(ranked[0][0]) + ' <b>' +
