@@ -27,14 +27,14 @@
   .legend .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .legend .pc{font-variant-numeric:tabular-nums;color:var(--text-soft);font-weight:600;}
 
-  /* Part 2 — smooth trend */
-  .trend{position:relative;width:100%;height:150px;}
-  .trend svg{display:block;width:100%;height:100%;overflow:visible;}
-  .trend .dot{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--amber);
-              transform:translate(-50%,-50%);box-shadow:0 0 0 3px rgba(239,159,39,.18);}
+  /* Part 2 — smooth trend (spent + income, y-axis, gridlines) */
+  .trend{position:relative;width:100%;height:172px;}
+  .trend svg{display:block;}
   .trend-x{display:flex;justify-content:space-between;font-size:11px;color:var(--text-faint);
-           margin-top:8px;}
-  .trend-x b{color:var(--text);font-weight:600;}
+           margin-top:6px;}
+  .trend-legend{display:flex;gap:18px;margin-top:12px;font-size:13px;}
+  .trend-legend .item{display:flex;align-items:center;gap:7px;}
+  .trend-legend .sw{width:12px;height:12px;border-radius:3px;}
 
   /* Part 3 — 12-month heatmap */
   .hm-wrap{display:flex;gap:8px;}
@@ -102,6 +102,10 @@
   <div class="card">
     <div class="trend" id="trend"></div>
     <div class="trend-x" id="trend-x"></div>
+    <div class="trend-legend">
+      <span class="item"><span class="sw" style="background:#EF9F27"></span>Spent</span>
+      <span class="item"><span class="sw" style="background:#1a6b3c"></span>Income</span>
+    </div>
   </div>
 
   <div class="section-title">Spending heatmap · last 12 months</div>
@@ -230,25 +234,33 @@
     card.innerHTML = '<div class="sharebar">' + bar + '</div><div class="legend">' + legend + '</div>';
   }
 
-  // ---- Part 2: smooth month-over-month trend (last 6 months) ----
+  // ---- Part 2: smooth month-over-month trend — spent + income, axis, grid ----
   function renderTrend() {
     var box = document.getElementById('trend');
     var xrow = document.getElementById('trend-x');
-    var N = 6, series = [];
+    var N = 6, months = [], spent = [], income = [];
     for (var i = N - 1; i >= 0; i--) {
-      var d = shiftMonth(cur, -i);
-      series.push({ d: d, v: totalsFor(key(d)).spent });
+      var d = shiftMonth(cur, -i), tt = totalsFor(key(d));
+      months.push(d); spent.push(tt.spent); income.push(tt.income);
     }
-    var W = box.clientWidth || 320, H = 150, padX = 6, padTop = 22, padBot = 10;
-    var maxV = Math.max.apply(null, series.map(function (s) { return s.v; })) || 1;
-    var innerW = W - padX * 2, innerH = H - padTop - padBot;
-    var pts = series.map(function (s, i) {
-      return {
-        x: padX + (N === 1 ? innerW / 2 : innerW * i / (N - 1)),
-        y: padTop + innerH * (1 - s.v / maxV),
-        v: s.v, d: s.d
-      };
-    });
+
+    var W = box.clientWidth || 320, H = 172;
+    var gutter = 40, padTop = 12, padBot = 16, padR = 8;
+    var xA = gutter, xB = W - padR, yA = padTop, yB = H - padBot;
+
+    var maxV = Math.max.apply(null, spent.concat(income)) || 1;
+    var stepGuess = maxV / 3;
+    var mag = Math.pow(10, Math.floor(Math.log(stepGuess) / Math.LN10));
+    var stepN = mag * (stepGuess / mag <= 1 ? 1 : stepGuess / mag <= 2 ? 2 : stepGuess / mag <= 5 ? 5 : 10);
+    var top = Math.max(stepN, Math.ceil(maxV / stepN) * stepN);
+    var ticks = []; for (var v = 0; v <= top + 0.5; v += stepN) ticks.push(v);
+
+    function X(i) { return xA + (xB - xA) * i / (N - 1); }
+    function Y(val) { return yB - (yB - yA) * val / top; }
+    function fmtK(val) {
+      if (val === 0) return '฿0';
+      return val >= 1000 ? '฿' + (Math.round(val / 100) / 10) + 'k' : '฿' + Math.round(val);
+    }
 
     // Catmull-Rom -> cubic bezier for a smooth curve through the points.
     function smoothPath(p) {
@@ -257,31 +269,43 @@
       for (var i = 0; i < p.length - 1; i++) {
         var p0 = p[i === 0 ? 0 : i - 1], p1 = p[i], p2 = p[i + 1],
             p3 = p[i + 2 < p.length ? i + 2 : i + 1];
-        var c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
-        var c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
-        d += 'C' + c1x + ',' + c1y + ' ' + c2x + ',' + c2y + ' ' + p2.x + ',' + p2.y;
+        d += 'C' + (p1.x + (p2.x - p0.x) / 6) + ',' + (p1.y + (p2.y - p0.y) / 6) + ' ' +
+                   (p2.x - (p3.x - p1.x) / 6) + ',' + (p2.y - (p3.y - p1.y) / 6) + ' ' +
+                   p2.x + ',' + p2.y;
       }
       return d;
     }
-    var linePath = smoothPath(pts);
-    var areaPath = linePath + 'L' + pts[pts.length - 1].x + ',' + (H - padBot) +
-                   'L' + pts[0].x + ',' + (H - padBot) + 'Z';
-    var last = pts[pts.length - 1];
+    var sp = spent.map(function (val, i) { return { x: X(i), y: Y(val) }; });
+    var ip = income.map(function (val, i) { return { x: X(i), y: Y(val) }; });
+    var spPath = smoothPath(sp), ipPath = smoothPath(ip);
+    var spArea = spPath + 'L' + sp[N - 1].x + ',' + yB + 'L' + sp[0].x + ',' + yB + 'Z';
+
+    var grid = ticks.map(function (val) {
+      var y = Y(val);
+      return '<line x1="' + xA + '" y1="' + y + '" x2="' + xB + '" y2="' + y +
+        '" stroke="rgba(128,128,128,0.14)" stroke-width="1"/>' +
+        '<text x="' + (xA - 6) + '" y="' + (y + 3) + '" text-anchor="end" font-size="9" ' +
+        'fill="#a09a8c">' + fmtK(val) + '</text>';
+    }).join('');
 
     box.innerHTML =
-      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+      '<svg width="' + W + '" height="' + H + '">' +
       '<defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0" stop-color="' + AMBER + '" stop-opacity="0.22"/>' +
+      '<stop offset="0" stop-color="' + AMBER + '" stop-opacity="0.18"/>' +
       '<stop offset="1" stop-color="' + AMBER + '" stop-opacity="0"/></linearGradient></defs>' +
-      '<path d="' + areaPath + '" fill="url(#tg)"/>' +
-      '<path d="' + linePath + '" fill="none" stroke="' + AMBER + '" stroke-width="2.5" ' +
-      'stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>' +
-      '</svg>' +
-      '<div class="dot" style="left:' + (last.x / W * 100) + '%;top:' + (last.y / H * 100) + '%"></div>';
+      grid +
+      '<path d="' + spArea + '" fill="url(#tg)"/>' +
+      '<path d="' + ipPath + '" fill="none" stroke="#1a6b3c" stroke-width="2.5" ' +
+      'stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<path d="' + spPath + '" fill="none" stroke="' + AMBER + '" stroke-width="2.5" ' +
+      'stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<circle cx="' + sp[N - 1].x + '" cy="' + sp[N - 1].y + '" r="4.5" fill="' + AMBER + '"/>' +
+      '<circle cx="' + ip[N - 1].x + '" cy="' + ip[N - 1].y + '" r="4.5" fill="#1a6b3c"/>' +
+      '</svg>';
 
-    xrow.innerHTML = series.map(function (s, i) {
-      var m = s.d.toLocaleDateString('en-GB', { month: 'short' });
-      return i === N - 1 ? '<b>' + m + ' ' + Mock.fmtBaht(s.v) + '</b>' : '<span>' + m + '</span>';
+    xrow.style.paddingLeft = gutter + 'px';
+    xrow.innerHTML = months.map(function (d) {
+      return '<span>' + d.toLocaleDateString('en-GB', { month: 'short' }) + '</span>';
     }).join('');
   }
 
