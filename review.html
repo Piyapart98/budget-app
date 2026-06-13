@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Review</title>
-<!-- warm-journal review v1.3 — income +sign (2026-06-13) -->
+<!-- warm-journal review v1.4 — default Other (2026-06-13) -->
 <link rel="stylesheet" href="warm.css">
 <style>
   .topbar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
@@ -497,7 +497,7 @@
         return;
       }
       slips.forEach(function (s) {
-        s.cat0 = fieldVal(s, 'Category') || 'Food';
+        s.cat0 = fieldVal(s, 'Category') || 'Other';   // blank prediction → neutral, not a wrong "Food"
         s.chosen = s.cat0;
         s.edit = freshEdit(s);
         s.orig = freshEdit(s);   // snapshot of OCR originals → drives the `edited` flag
