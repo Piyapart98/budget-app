@@ -50,7 +50,8 @@
   // required for correctness, but keeping them aligned makes diffs readable.
   var DB_COLUMNS = ['Date', 'Description', 'Amount', 'Category', 'Note',
                     'RefID', 'ReviewedAt', 'Edited', 'Deleted',
-                    'settlement_id', 'roong_share'];
+                    'settlement_id', 'roong_share',
+                    'Card'];   // trailing → old 11-col rows read Card as ''
   var CHANGELOG_COLUMNS = ['Timestamp', 'RefID', 'Action', 'Field',
                            'OldValue', 'NewValue', 'Reason'];
   var ROONG_SETTLEMENT_COLUMNS = [
@@ -409,6 +410,49 @@
     catch (e) { return { cards: [], extra_note_suggestions: [], income_categories: [] }; }
   }
 
+  // loadCards — the editable card list, [{last4, name}, ...]. local → /api/cards;
+  // github → cards.json in budget-data (the single source of truth).
+  async function loadCards() {
+    if (MODE === 'local') {
+      var res = await fetch('/api/cards');
+      if (!res.ok) throw new Error('GET /api/cards: ' + res.status);
+      var data = await res.json();
+      return (data && data.cards) ? data.cards : [];
+    }
+    var got = await ghGet('cards.json');
+    if (!got.content) return [];
+    try {
+      var map = JSON.parse(got.content);
+      return Object.keys(map).map(function (l4) { return { last4: l4, name: map[l4] }; });
+    } catch (e) { return []; }
+  }
+
+  // saveCard — add (or rename) a card. last4 must be 4 digits. local → POST
+  // /api/cards (Mac writes cards.json + refreshes config.json); github → merge
+  // into cards.json and PUT it. Returns the updated [{last4, name}, ...].
+  async function saveCard(last4, name) {
+    last4 = String(last4 || '').trim();
+    name = String(name || '').trim();
+    if (!/^\d{4}$/.test(last4)) throw new Error('Card last-4 must be exactly 4 digits.');
+    if (!name) throw new Error('Card name is required.');
+    if (MODE === 'local') {
+      var res = await fetch('/api/cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ last4: last4, name: name }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'POST /api/cards: ' + res.status);
+      return data.cards || [];
+    }
+    var got = await ghGet('cards.json');
+    var map = {};
+    if (got.content) { try { map = JSON.parse(got.content); } catch (e) { map = {}; } }
+    map[last4] = name;
+    await ghPut('cards.json', JSON.stringify(map, null, 2), got.sha, 'add card from phone');
+    return Object.keys(map).map(function (l4) { return { last4: l4, name: map[l4] }; });
+  }
+
   // loadVerification — statement vs DB cross-check.
   // Local mode: calls /api/verify (optional ?card=XXXX to scope to one card),
   //   which parses the PDFs live.
@@ -489,6 +533,7 @@
         ReviewedAt:  ts,
         Edited:      'No',
         Deleted:     'False',
+        Card:        String(payload.Card || '').trim(),
       });
       return rows;
     }, 'entry from phone: ' + (payload.Description || '') + ' ' + (payload.Amount || ''),
@@ -984,6 +1029,7 @@
         ReviewedAt:  ts,
         Edited:      'No',
         Deleted:     'False',
+        Card:        String(fields.Card || '').trim(),
       };
     });
     var addedCount = newRows.length;
@@ -1180,6 +1226,8 @@
     loadGoals:           loadGoals,
     saveGoals:           saveGoals,
     loadConfig:          loadConfig,
+    loadCards:           loadCards,
+    saveCard:            saveCard,
     loadVerification:    loadVerification,
     archiveStatement:    archiveStatement,
     submitEntry:         submitEntry,

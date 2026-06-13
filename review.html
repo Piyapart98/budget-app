@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Review</title>
-<!-- warm-journal review v1.4 — default Other (2026-06-13) -->
+<!-- warm-journal review v1.5 — Card/Note split (2026-06-13) -->
 <link rel="stylesheet" href="warm.css">
 <style>
   .topbar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
@@ -103,6 +103,12 @@
   .lightbox.open{display:flex;}
   .lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;}
 
+  /* Card select row (payment card; None default, auto-selected) */
+  .card-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;}
+  .card-row .lbl{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);}
+  .card-select{font-family:var(--sans);font-size:13px;color:var(--text);background:var(--bg);
+    border:1px solid var(--border);border-radius:10px;padding:7px 10px;min-width:150px;}
+
   /* possible-duplicate heads-up (is_duplicate from loadDrafts) */
   .dup-badge{display:inline-flex;align-items:center;gap:4px;margin:0 0 8px;
     padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;
@@ -159,6 +165,7 @@
   function isIncomeCat(c) { return !!INCOME_CATS[(c || '').trim()]; }
 
   var slips = [], cursor = 0, decisions = [], curSrc = null;
+  var cardOptions = [];   // [{last4, name}] from DataSource.loadCards(), filled at bootstrap
   var stage = document.getElementById('stage');
   var sheetBd = document.getElementById('sheet-bd'), sheet = document.getElementById('sheet');
   var lightbox = document.getElementById('lightbox');
@@ -194,6 +201,7 @@
         fieldsHtml(s) +
         '<div class="edit-hint">Tap a field above to fix it.</div>' +
         catHtml(s) +
+        cardHtml(s) +
         '<div class="actions">' +
           '<button class="btn btn-ghost" id="skip">Skip</button>' +
           '<button class="btn btn-green btn-ok" id="ok">Looks right ✓</button>' +
@@ -212,8 +220,47 @@
 
     wireFields(s);
     wireCat(s);
+    wireCard(s);
     wireDecide(s);
     wireSwipe();
+  }
+
+  // ---- Card (select; None default, auto-selected from the detected card) ----
+  function cardHtml(s) {
+    var opts = '<option value="">None</option>' +
+      cardOptions.map(function (c) {
+        return '<option value="' + Mock.escapeHtml(c.name) + '"' +
+          (c.name === s.card ? ' selected' : '') + '>' + Mock.escapeHtml(c.name) + '</option>';
+      }).join('') +
+      '<option value="__add__">➕ Add card…</option>';
+    return '<div class="card-row"><span class="lbl">Card</span>' +
+      '<select class="card-select" id="card-select">' + opts + '</select></div>';
+  }
+  function wireCard(s) {
+    var sel = document.getElementById('card-select');
+    if (!sel) return;
+    sel.addEventListener('click', function (e) { e.stopPropagation(); });
+    sel.addEventListener('change', function (e) {
+      e.stopPropagation();
+      if (sel.value === '__add__') { addCardFlow(s, sel); return; }
+      s.card = sel.value;
+    });
+  }
+  async function addCardFlow(s, sel) {
+    var name = window.prompt('New card name (e.g. Krungthai Travel):');
+    if (!name || !name.trim()) { sel.value = s.card || ''; return; }
+    var last4 = window.prompt('Card last-4 digits (for auto-detect):');
+    if (!last4 || !/^\d{4}$/.test(last4.trim())) {
+      alert('Last-4 must be exactly 4 digits.'); sel.value = s.card || ''; return;
+    }
+    try {
+      cardOptions = await DataSource.saveCard(last4.trim(), name.trim());
+      s.card = name.trim();
+      render();
+    } catch (err) {
+      alert('Add card failed: ' + (err && err.message ? err.message : err));
+      sel.value = s.card || '';
+    }
   }
 
   // ---- editable fields (#2) ----
@@ -316,7 +363,7 @@
   function wireSwipe() {
     var card = document.getElementById('card'); if (!card) return;
     card.addEventListener('pointerdown', function (e) {
-      if (e.target.closest('.fpill, .btn, .cat-change')) return;
+      if (e.target.closest('.fpill, .btn, .cat-change, .card-select, .card-row')) return;
       drag = { card: card, x0: e.clientX, y0: e.clientY, lock: null };
       card.setPointerCapture(e.pointerId);
     });
@@ -408,6 +455,7 @@
   // extraction-feedback log on the Mac path (ocr_corrections.csv).
   function wasEdited(s) {
     if (s.chosen !== s.cat0) return true;
+    if ((s.card || '') !== (s.card0 || '')) return true;
     return ['Amount', 'Date', 'Description', 'Note'].some(function (k) {
       return String(s.edit[k] || '') !== String(s.orig[k] || '');
     });
@@ -445,6 +493,7 @@
           Description: s.edit.Description || '',
           Amount:      s.edit.Amount || '',
           Category:    s.chosen || '',
+          Card:        s.card || '',
           Note:        s.edit.Note || '',
         };
       }
@@ -489,6 +538,8 @@
     try {
       cursor = 0; decisions = [];
       slips = await DataSource.loadDrafts();
+      // Card list for the picker (best-effort — an empty list just means only None).
+      try { cardOptions = (await DataSource.loadCards()) || []; } catch (e) { cardOptions = []; }
       if (!slips.length) {
         document.getElementById('submit-bar').classList.remove('show');
         document.getElementById('progress').textContent = '';
@@ -499,6 +550,8 @@
       slips.forEach(function (s) {
         s.cat0 = fieldVal(s, 'Category') || 'Other';   // blank prediction → neutral, not a wrong "Food"
         s.chosen = s.cat0;
+        s.card = fieldVal(s, 'Card') || '';            // auto-selected card (None if blank)
+        s.card0 = s.card;                               // for the `edited` flag
         s.edit = freshEdit(s);
         s.orig = freshEdit(s);   // snapshot of OCR originals → drives the `edited` flag
       });

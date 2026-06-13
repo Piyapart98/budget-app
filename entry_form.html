@@ -55,10 +55,9 @@
   .done-sub{font-size:12px;color:var(--text-muted);font-family:var(--mono);margin-bottom:20px;line-height:1.7;}
   .btn-sm{padding:9px 20px;font-size:13px;width:auto;display:inline-block;}
 </style>
+<!-- card-split v1 (2026-06-14) -->
 </head>
 <body>
-<!-- Populated from /api/config on load — see buildNoteDatalist() in the script. -->
-<datalist id="note-suggestions"></datalist>
 <header>
   <a href="./" style="display:inline-block;font-size:11px;color:var(--text-muted);text-decoration:none;font-family:var(--mono);padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);margin-bottom:8px;">← Home</a>
   <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -86,8 +85,12 @@
     </div>
     <div class="field-group">
       <label class="field-label" for="f-note">Note</label>
-      <input type="text" id="f-note" list="note-suggestions" placeholder="type or pick a card">
+      <input type="text" id="f-note" placeholder="optional">
     </div>
+  </div>
+  <div class="field-group">
+    <label class="field-label" for="f-card">Card</label>
+    <select id="f-card"><option value="">None</option></select>
   </div>
   <div class="field-group">
     <label class="field-label" for="f-cat">Category</label>
@@ -118,6 +121,7 @@
     <div class="review-row"><span class="review-label">Description</span><span class="review-val" id="r-desc">—</span></div>
     <div class="review-row"><span class="review-label">Amount</span><span class="review-val" id="r-amount">—</span></div>
     <div class="review-row"><span class="review-label">Category</span><span class="review-val" id="r-cat">—</span></div>
+    <div class="review-row"><span class="review-label">Card</span><span class="review-val" id="r-card">—</span></div>
     <div class="review-row"><span class="review-label">Note</span><span class="review-val" id="r-note">—</span></div>
     <div class="review-row"><span class="review-label">Source</span><span class="review-val" style="color:var(--amber);">manual</span></div>
   </div>
@@ -143,21 +147,33 @@
 function v(id){return document.getElementById(id).value.trim();}
 function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
-// Pull card list + extra suggestions via DataSource so this stays in sync
-// with slip_extractor.CARD_BY_LAST4 (local mode) or config.json (GitHub mode).
-// Fire-and-forget — if it fails the input still works as plain text.
-async function loadNoteConfig(){
-  try{
-    const cfg=await DataSource.loadConfig();
-    const dl=document.getElementById('note-suggestions');
-    const cards=(cfg.cards||[]).map(c=>
-      `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (xx${escapeHtml(c.last4)})</option>`);
-    const extras=(cfg.extra_note_suggestions||[]).map(v=>
-      `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`);
-    dl.innerHTML=cards.concat(extras).join('');
-  }catch(_){/* leave datalist empty — input still functional */}
+// Populate the Card <select> from the editable card list (DataSource.loadCards
+// → /api/cards local, cards.json on GitHub). "None" default + an "Add card…"
+// item that captures name + last-4 so the new card auto-detects on future slips.
+let cardOptions=[];
+async function loadCardSelect(){
+  try{ cardOptions=(await DataSource.loadCards())||[]; }catch(_){ cardOptions=[]; }
+  const sel=document.getElementById('f-card');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">None</option>'+
+    cardOptions.map(c=>`<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('')+
+    '<option value="__add__">➕ Add card…</option>';
+  sel.value=cur||'';
 }
-loadNoteConfig();
+loadCardSelect();
+document.getElementById('f-card').addEventListener('change',async function(e){
+  const sel=e.target;
+  if(sel.value!=='__add__') return;
+  const name=window.prompt('New card name (e.g. Krungthai Travel):');
+  if(!name||!name.trim()){sel.value='';return;}
+  const last4=window.prompt('Card last-4 digits (for auto-detect):');
+  if(!last4||!/^\d{4}$/.test(last4.trim())){alert('Last-4 must be exactly 4 digits.');sel.value='';return;}
+  try{
+    cardOptions=await DataSource.saveCard(last4.trim(),name.trim());
+    await loadCardSelect();
+    sel.value=name.trim();
+  }catch(err){alert('Add card failed: '+(err&&err.message?err.message:err));sel.value='';}
+});
 function show(id){['form-view','review-view','done-view'].forEach(x=>document.getElementById(x).className='view');document.getElementById(id).className='view active';}
 function showErr(id,msg){const e=document.getElementById(id);e.textContent=msg;e.style.display='block';}
 function hideErr(id){document.getElementById(id).style.display='none';}
@@ -179,6 +195,7 @@ function goReview(){
   document.getElementById('r-desc').textContent=desc;
   document.getElementById('r-amount').textContent='฿'+parseInt(amount).toLocaleString();
   document.getElementById('r-cat').textContent=v('f-cat')||'blank';
+  document.getElementById('r-card').textContent=v('f-card')||'None';
   document.getElementById('r-note').textContent=v('f-note')||'blank';
   show('review-view');
 }
@@ -198,6 +215,7 @@ async function doCommit(){
     Description: v('f-desc'),
     Amount:      v('f-amount'),
     Category:    v('f-cat'),
+    Card:        v('f-card')==='__add__'?'':v('f-card'),
     Note:        v('f-note'),
   };
 

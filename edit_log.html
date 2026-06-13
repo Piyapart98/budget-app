@@ -71,10 +71,9 @@
   .btn-confirm-green{background:var(--green-bg);color:var(--green);border-color:var(--green-border);}
   .btn-confirm-red{background:var(--red-bg);color:var(--red);border-color:var(--red-border);}
 </style>
+<!-- card-split v1 (2026-06-14) -->
 </head>
 <body>
-<!-- Populated from /api/config on load — see loadNoteConfig() in the script. -->
-<datalist id="note-suggestions"></datalist>
 <header>
   <a href="./" style="display:inline-block;font-size:11px;color:var(--text-muted);text-decoration:none;font-family:var(--mono);padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);margin-bottom:8px;">← Home</a>
   <div class="header-title">Edit log</div>
@@ -96,7 +95,7 @@
       <label class="field-label">Field to edit</label>
       <select id="edit-field" onchange="onFieldChange()">
         <option value="">— select field —</option>
-        <option>Date</option><option>Description</option><option>Amount</option><option>Category</option><option>Note</option>
+        <option>Date</option><option>Description</option><option>Amount</option><option>Category</option><option>Card</option><option>Note</option>
       </select>
     </div>
     <div class="field-group" id="old-val-wrap" style="display:none;">
@@ -139,30 +138,25 @@
 <script src="data-source.js"></script>
 <script>
 // Map UI field names <-> DB column names. The API expects DB column names.
-const FIELD_TO_DB={Date:'Date',Description:'Description',Amount:'Amount',Category:'Category',Note:'Note'};
+const FIELD_TO_DB={Date:'Date',Description:'Description',Amount:'Amount',Category:'Category',Card:'Card',Note:'Note'};
 
 // Option lists must match entry_form.html exactly so data stays consistent.
 const CATEGORY_OPTIONS=[
   {group:'Spending',items:['Food','Drinks and Snacks','Transport','Health / Necessaries','Shopping','Groceries','Utilities and Subs','Sports','Social Expenses / Donation','With Roong','To Mom','Other']},
   {group:'Income / Savings',items:['Salary','Bonus','Reimbursement','Payback from someone','Provident Fund','Mutual Fund','Coop Account','Saving for EOY Tax Deduction','Interest payment']},
 ];
-// Note suggestions come from /api/config — see loadNoteConfig() below.
+// Card options come from DataSource.loadCards() — see loadCardOptions() below.
 // Card last-4s live in slip_extractor.CARD_BY_LAST4 — single source of truth.
 
 function escapeHtmlMini(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
-async function loadNoteConfig(){
-  try{
-    const cfg=await DataSource.loadConfig();
-    const dl=document.getElementById('note-suggestions');
-    const cards=(cfg.cards||[]).map(c=>
-      `<option value="${escapeHtmlMini(c.name)}">${escapeHtmlMini(c.name)} (xx${escapeHtmlMini(c.last4)})</option>`);
-    const extras=(cfg.extra_note_suggestions||[]).map(v=>
-      `<option value="${escapeHtmlMini(v)}">${escapeHtmlMini(v)}</option>`);
-    dl.innerHTML=cards.concat(extras).join('');
-  }catch(_){/* leave datalist empty — input still functional */}
+// Card list for the Card-field editor (DataSource.loadCards → /api/cards local,
+// cards.json on GitHub). Best-effort; an empty list just means only "None".
+let cardOptions=[];
+async function loadCardOptions(){
+  try{ cardOptions=(await DataSource.loadCards())||[]; }catch(_){ cardOptions=[]; }
 }
-loadNoteConfig();
+loadCardOptions();
 
 // Live state, populated from the API.
 let transactions=[];
@@ -184,6 +178,7 @@ function rowToTx(r){
     desc:     r.Description || '',
     amount:   r.Amount || '',
     category: r.Category || '',
+    card:     r.Card || '',
     note:     r.Note || '',
     source:   (r.RefID||'').toLowerCase().startsWith('manual') ? 'manual' : 'slip',
     deleted:  String(r.Deleted||'').toLowerCase()==='true',
@@ -257,7 +252,7 @@ function renderTx(){
         <div style="display:flex;justify-content:space-between;align-items:flex-start;">
           <div>
             <div class="tx-desc">${tx.desc||'—'}</div>
-            <div class="tx-meta">${tx.ref} · ${tx.date} · ${tx.category||'no category'} · ${tx.note||'—'}</div>
+            <div class="tx-meta">${tx.ref} · ${tx.date} · ${tx.category||'no category'}${tx.card?' · '+escapeHtmlMini(tx.card):''} · ${tx.note||'—'}</div>
             <div class="badges">
               ${tx.deleted?'<span class="badge badge-deleted">deleted</span>':''}
               ${tx.edited&&!tx.deleted?'<span class="badge badge-edited">edited</span>':''}
@@ -338,11 +333,18 @@ function buildEditControl(field,currentVal){
         ${groups}
       </select>`;
   }
+  if(field==='Card'){
+    // Card is a fixed pick from the editable card list (+ None).
+    const opts=cardOptions.map(c=>
+      `<option ${c.name===currentVal?'selected':''}>${escapeHtmlMini(c.name)}</option>`).join('');
+    return `<select id="edit-new-val">
+        <option value="" ${!currentVal?'selected':''}>None</option>
+        ${opts}
+      </select>`;
+  }
   if(field==='Note'){
-    // Free-text input with datalist suggestions so the user can type anything
-    // (a friend's name, custom label) but still pick from known cards quickly.
-    return `<input type="text" id="edit-new-val" list="note-suggestions"
-              placeholder="type or pick a card"
+    // Free text now (the card moved to its own field).
+    return `<input type="text" id="edit-new-val" placeholder="note (optional)"
               value="${(currentVal||'').replace(/"/g,'&quot;')}">`;
   }
   // Description and any fallback: plain text.
@@ -355,7 +357,7 @@ function onFieldChange(){
   const newWrap=document.getElementById('new-val-wrap');
   if(!field){oldWrap.style.display='none';newWrap.style.display='none';return;}
   const tx=transactions[activeIdx];
-  const raw={Date:tx.date,Description:tx.desc,Amount:tx.amount,Category:tx.category,Note:tx.note};
+  const raw={Date:tx.date,Description:tx.desc,Amount:tx.amount,Category:tx.category,Card:tx.card,Note:tx.note};
   const current=raw[field];
   // Show current value (display blank as the word "blank" for clarity).
   document.getElementById('old-val-display').textContent=(current===''||current==null)?'blank':current;
@@ -381,7 +383,7 @@ async function commitEdit(){
 
   let rawVal=inp.value;
   let newVal=typeof rawVal==='string'?rawVal.trim():String(rawVal);
-  const raw={Date:tx.date,Description:tx.desc,Amount:String(tx.amount||''),Category:tx.category||'',Note:tx.note||''};
+  const raw={Date:tx.date,Description:tx.desc,Amount:String(tx.amount||''),Category:tx.category||'',Card:tx.card||'',Note:tx.note||''};
   const oldVal=raw[field]||'';
 
   // Per-field validation.
