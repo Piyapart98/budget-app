@@ -91,9 +91,19 @@
       });
     });
 
+    // Guard against deciding the same slip twice (e.g. a swipe and a button
+    // tap, or a second tap during the 240ms exit animation before cursor
+    // advances). Without this, decisions[] gets a duplicate and cursor jumps
+    // two slips.
+    var decided = false;
     function decide(kind) {
+      if (decided) return;
+      decided = true;
       decisions.push({ slip: s, kind: kind, category: chosen });
       var card = document.getElementById('card');
+      // Clear any lingering inline transform from a partial swipe so the
+      // gone-left/right class wins (inline styles beat class selectors).
+      card.style.transform = '';
       card.classList.add(kind === 'confirm' ? 'gone-right' : 'gone-left');
       setTimeout(function () { cursor++; renderCurrent(); }, 240);
     }
@@ -109,7 +119,10 @@
       card.style.transform = 'translateX(' + dx + 'px) rotate(' + (dx / 30) + 'deg)';
     }, { passive: true });
     card.addEventListener('touchend', function (e) {
-      var dx = e.changedTouches[0].clientX - (startX == null ? 0 : startX);
+      // Ignore a touchend with no matching touchstart on this card — otherwise
+      // dx would be measured from 0 and almost always trip the confirm branch.
+      if (startX == null) return;
+      var dx = e.changedTouches[0].clientX - startX;
       startX = null;
       if (dx > 80) decide('confirm');
       else if (dx < -80) decide('skip');
