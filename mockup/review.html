@@ -7,22 +7,85 @@
 <title>Review — new design</title>
 <link rel="stylesheet" href="mock.css">
 <style>
-  .topbar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;}
+  .topbar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
   .progress{font-size:12px;color:var(--text-faint);}
-  .stage{position:relative;min-height:60vh;}
-  .slip-card{position:absolute;inset:0;background:var(--surface);border:1px solid var(--border);
-             border-radius:18px;padding:14px;box-shadow:0 4px 18px rgba(0,0,0,.07);
-             touch-action:pan-y;transition:transform .25s ease,opacity .25s ease;}
-  .slip-card.gone-right{transform:translateX(120%) rotate(8deg);opacity:0;}
-  .slip-card.gone-left{transform:translateX(-120%) rotate(-8deg);opacity:0;}
-  .slip-img{width:100%;height:38vh;object-fit:contain;background:#f4f1ea;border-radius:12px;}
-  .slip-amount{font-size:22px;font-weight:700;margin-top:10px;}
-  .slip-sub{font-size:12px;color:var(--text-soft);margin:2px 0 10px;}
-  .actions{display:flex;gap:10px;margin-top:14px;}
-  .actions .btn-ghost{flex:1;} .actions .btn-green{flex:2;}
-  .done-box{text-align:center;padding:40px 10px;}
-  .done-box h2{font-family:var(--serif);font-weight:400;font-size:22px;margin-bottom:8px;}
-  .done-list{text-align:left;margin-top:16px;}
+
+  /* ---- Swipe deck ---- */
+  .stage{position:relative;min-height:50vh;margin-top:12px;}
+  .slip-card{background:var(--surface);border:1px solid var(--border);border-radius:18px;
+    padding:14px;box-shadow:0 4px 18px rgba(0,0,0,.07);touch-action:pan-y;position:relative;
+    will-change:transform;}
+  .slip-card.flyout{transition:transform .32s ease-out,opacity .32s ease-out;}
+  .slip-card.springback{transition:transform .25s cubic-bezier(.2,.8,.3,1);}
+
+  .slip-img{width:100%;height:34vh;max-height:280px;object-fit:contain;background:#f4f1ea;
+    border-radius:12px;display:block;}
+  .slip-img.empty{display:flex;align-items:center;justify-content:center;color:var(--text-faint);
+    font-size:12px;text-align:center;padding:18px;}
+
+  .amount{font-family:var(--serif);font-size:30px;font-weight:400;margin:12px 0 2px;}
+
+  /* editable field pills (#2) */
+  .fields{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 2px;}
+  .fpill{display:inline-flex;align-items:center;gap:6px;background:var(--bg);
+    border:1px solid var(--border);border-radius:999px;padding:6px 11px;font-size:13px;cursor:text;}
+  .fpill .k{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);}
+  .fpill .v{font-weight:500;}
+  .fpill.empty .v{color:var(--amber-text);}
+  .fpill.editing{background:var(--surface);border-color:#c8c0ae;}
+  .fpill input{font-size:13px;font-family:var(--sans);border:none;outline:none;background:transparent;
+    color:var(--text);min-width:70px;max-width:180px;}
+  .edit-hint{font-size:11px;color:var(--text-faint);margin:3px 2px 0;}
+
+  /* category (#1) — Option A bottom sheet */
+  .cat-head{display:flex;align-items:center;justify-content:space-between;margin:14px 0 0;}
+  .cat-head .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);}
+  .cat-now{display:inline-flex;align-items:center;gap:7px;background:var(--green);color:#fff;
+    border-radius:999px;padding:7px 14px;font-size:14px;font-weight:600;margin-top:7px;}
+  .cat-change{background:none;border:none;color:var(--green);font-size:13px;font-weight:600;
+    cursor:pointer;font-family:var(--sans);padding:4px;}
+
+  /* tap buttons */
+  .actions{display:flex;gap:10px;margin-top:16px;}
+  .actions .btn{flex:1;}
+  .actions .btn-ok{flex:2;}
+
+  /* Tinder stamps */
+  .stamp{position:absolute;top:24px;font-size:24px;font-weight:800;letter-spacing:1px;
+    padding:5px 14px;border:4px solid;border-radius:12px;opacity:0;pointer-events:none;
+    text-transform:uppercase;z-index:5;}
+  .stamp.ok{left:18px;color:var(--green);border-color:var(--green);transform:rotate(-13deg);}
+  .stamp.no{right:18px;color:var(--red);border-color:var(--red);transform:rotate(13deg);}
+
+  /* bottom sheet */
+  .sheet-bd{position:fixed;inset:0;background:rgba(20,18,14,.4);z-index:50;display:none;}
+  .sheet-bd.open{display:block;}
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:51;background:var(--surface);
+    border-radius:20px 20px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));
+    transform:translateY(100%);transition:transform .25s ease;max-width:480px;margin:0 auto;
+    max-height:72vh;overflow-y:auto;}
+  .sheet.open{transform:translateY(0);}
+  .sheet h3{font-family:var(--serif);font-weight:400;font-size:18px;margin-bottom:12px;}
+  .cat-grid{display:flex;flex-wrap:wrap;gap:7px;}
+  .cchip{display:inline-flex;align-items:center;gap:6px;background:#f1efe8;color:var(--text-soft);
+    border:1px solid transparent;border-radius:999px;font-size:13px;padding:8px 13px;cursor:pointer;}
+  .cchip.on{background:var(--green);color:#fff;}
+
+  /* submit gate + done */
+  .submit-bar{position:fixed;bottom:0;left:0;right:0;z-index:40;background:var(--surface);
+    border-top:1px solid var(--border);padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    display:none;max-width:480px;margin:0 auto;}
+  .submit-bar.show{display:block;}
+  .submit-btn{width:100%;padding:14px;background:var(--text);color:var(--surface);border:none;
+    border-radius:14px;font-size:15px;font-weight:600;font-family:var(--sans);cursor:pointer;}
+  .submit-note{font-size:11px;color:var(--text-faint);text-align:center;margin-top:6px;}
+
+  .done-box{text-align:center;padding:38px 12px;}
+  .done-box h2{font-family:var(--serif);font-weight:400;font-size:23px;margin-bottom:8px;}
+  .done-box .sub{font-size:13px;color:var(--text-soft);line-height:1.5;}
+  .done-list{text-align:left;margin-top:18px;}
+  .replay{margin-top:18px;background:none;border:1px solid var(--border);border-radius:10px;
+    padding:9px 16px;font-size:13px;color:var(--text-soft);cursor:pointer;font-family:var(--sans);}
 </style>
 </head>
 <body>
@@ -34,18 +97,34 @@
   <a class="back-link" href="index.html">‹ Home</a>
   <div class="stage" id="stage"><div class="soft-note">Loading slips…</div></div>
 </div>
+
+<!-- category bottom sheet (Option A) -->
+<div class="sheet-bd" id="sheet-bd"></div>
+<div class="sheet" id="sheet">
+  <h3>Choose a category</h3>
+  <div class="cat-grid" id="sheet-grid"></div>
+</div>
+
+<div class="submit-bar" id="submit-bar">
+  <button class="submit-btn" id="submit-btn">Submit</button>
+  <div class="submit-note" id="submit-note"></div>
+</div>
+
 <script src="../data-source.js"></script>
 <script src="mock-shared.js"></script>
 <script>
+// READ-ONLY mockup. Only DataSource.load* methods (loadDrafts, loadSlipImage) are
+// called — no write methods of any kind. "Submit" is simulated; nothing is saved.
 (function () {
   'use strict';
-  // Must match review.html CAT_GROUPS (spending list shown as chips).
+  // Must match review.html CAT_GROUPS (Spending list shown in the picker).
   var CATS = ['Food','Drinks and Snacks','Transport','Health / Necessaries','Shopping',
     'Groceries','Utilities and Subs','Sports','Social Expenses / Donation',
     'With Roong','To Mom','Other'];
 
   var slips = [], cursor = 0, decisions = [];
   var stage = document.getElementById('stage');
+  var sheetBd = document.getElementById('sheet-bd'), sheet = document.getElementById('sheet');
 
   function fieldVal(slip, key) {
     var f = (slip.fields || {})[key];
@@ -53,112 +132,237 @@
   }
   function setProgress() {
     document.getElementById('progress').textContent =
-      slips.length ? Math.min(cursor + 1, slips.length) + ' of ' + slips.length : '';
+      (slips.length && cursor < slips.length) ? (cursor + 1) + ' of ' + slips.length : '';
   }
 
-  function renderCurrent() {
+  function render() {
     setProgress();
     if (cursor >= slips.length) return renderDone();
     var s = slips[cursor];
-    var suggested = fieldVal(s, 'Category') || 'Food';
+
     stage.innerHTML =
       '<div class="slip-card" id="card">' +
-      '<img class="slip-img" id="slip-img" alt="slip">' +
-      '<div class="slip-amount">' + Mock.fmtBaht(fieldVal(s, 'Amount')) + '</div>' +
-      '<div class="slip-sub">' + Mock.escapeHtml(fieldVal(s, 'Description') || s.filename) +
-      ' · ' + Mock.escapeHtml(fieldVal(s, 'Date') || 'date unknown') + '</div>' +
-      '<div id="chips">' + CATS.map(function (c) {
-        return '<span class="chip' + (c === suggested ? ' selected' : '') +
-               '" data-cat="' + Mock.escapeHtml(c) + '">' + Mock.catEmoji(c) + ' ' +
-               Mock.escapeHtml(c) + '</span>';
-      }).join('') + '</div>' +
-      '<div class="actions"><button class="btn btn-ghost" id="skip">Skip</button>' +
-      '<button class="btn btn-green" id="confirm">Looks right ✓</button></div>' +
+        '<div class="stamp ok">Looks right</div>' +
+        '<div class="stamp no">Reject</div>' +
+        '<img class="slip-img" id="slip-img" alt="slip">' +
+        '<div class="amount" id="amount">' + Mock.fmtBaht(s.edit.Amount) + '</div>' +
+        fieldsHtml(s) +
+        '<div class="edit-hint">Tap a field above to fix it.</div>' +
+        catHtml(s) +
+        '<div class="actions">' +
+          '<button class="btn btn-ghost" id="reject">Reject</button>' +
+          '<button class="btn btn-green btn-ok" id="ok">Looks right ✓</button>' +
+        '</div>' +
       '</div>';
 
     DataSource.loadSlipImage(s).then(function (src) {
       var img = document.getElementById('slip-img');
       if (img && src) img.src = src;
-    }).catch(function () { /* leave placeholder background */ });
+      else if (img) { img.classList.add('empty'); img.outerHTML =
+        '<div class="slip-img empty" id="slip-img">' + Mock.escapeHtml(s.filename || 'no image') + '</div>'; }
+    }).catch(function () {});
 
-    var chosen = suggested;
-    document.getElementById('chips').addEventListener('click', function (e) {
-      var chip = e.target.closest('.chip');
-      if (!chip) return;
-      chosen = chip.getAttribute('data-cat');
-      Array.prototype.forEach.call(document.querySelectorAll('#chips .chip'), function (c) {
-        c.classList.toggle('selected', c === chip);
+    wireFields(s);
+    wireCat(s);
+    wireDecide(s);
+    wireSwipe();
+  }
+
+  // ---- editable fields (#2) ----
+  function fieldsHtml(s) {
+    var defs = [['Date', s.edit.Date || ''], ['Description', s.edit.Description || ''],
+                ['Note', s.edit.Note || '']];
+    return '<div class="fields">' +
+      // Amount is shown big above; offer an Amount pill too for quick edit.
+      '<span class="fpill" data-f="Amount"><span class="k">Amount</span>' +
+        '<span class="v">' + Mock.escapeHtml(s.edit.Amount || '0') + '</span></span>' +
+      defs.map(function (d) {
+        var empty = !d[1];
+        return '<span class="fpill' + (empty ? ' empty' : '') + '" data-f="' + d[0] + '">' +
+          '<span class="k">' + d[0] + '</span><span class="v">' +
+          Mock.escapeHtml(empty ? '+ add ' + d[0].toLowerCase() : d[1]) + '</span></span>';
+      }).join('') + '</div>';
+  }
+  function wireFields(s) {
+    Array.prototype.forEach.call(stage.querySelectorAll('.fpill'), function (p) {
+      p.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (p.classList.contains('editing')) return;
+        var key = p.getAttribute('data-f');
+        var cur = s.edit[key] || '';
+        var type = key === 'Amount' ? 'number' : key === 'Date' ? 'date' : 'text';
+        p.classList.remove('empty');
+        p.classList.add('editing');
+        p.innerHTML = '<span class="k">' + key + '</span>' +
+          '<input type="' + type + '" value="' + Mock.escapeHtml(cur) + '">';
+        var inp = p.querySelector('input'); inp.focus();
+        try { inp.select && inp.select(); } catch (_) {}
+        function done() { s.edit[key] = inp.value; render(); }
+        inp.addEventListener('blur', done);
+        inp.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); inp.blur(); }
+        });
       });
-    });
-
-    // Guard against deciding the same slip twice (e.g. a swipe and a button
-    // tap, or a second tap during the 240ms exit animation before cursor
-    // advances). Without this, decisions[] gets a duplicate and cursor jumps
-    // two slips.
-    var decided = false;
-    function decide(kind) {
-      if (decided) return;
-      decided = true;
-      decisions.push({ slip: s, kind: kind, category: chosen });
-      var card = document.getElementById('card');
-      // Clear any lingering inline transform from a partial swipe so the
-      // gone-left/right class wins (inline styles beat class selectors).
-      card.style.transform = '';
-      card.classList.add(kind === 'confirm' ? 'gone-right' : 'gone-left');
-      setTimeout(function () { cursor++; renderCurrent(); }, 240);
-    }
-    document.getElementById('confirm').addEventListener('click', function () { decide('confirm'); });
-    document.getElementById('skip').addEventListener('click', function () { decide('skip'); });
-
-    // Swipe: right = confirm, left = skip (same gesture language as the real page).
-    var startX = null, card = document.getElementById('card');
-    card.addEventListener('touchstart', function (e) { startX = e.touches[0].clientX; }, { passive: true });
-    card.addEventListener('touchmove', function (e) {
-      if (startX == null) return;
-      var dx = e.touches[0].clientX - startX;
-      card.style.transform = 'translateX(' + dx + 'px) rotate(' + (dx / 30) + 'deg)';
-    }, { passive: true });
-    card.addEventListener('touchend', function (e) {
-      // Ignore a touchend with no matching touchstart on this card — otherwise
-      // dx would be measured from 0 and almost always trip the confirm branch.
-      if (startX == null) return;
-      var dx = e.changedTouches[0].clientX - startX;
-      startX = null;
-      if (dx > 80) decide('confirm');
-      else if (dx < -80) decide('skip');
-      else card.style.transform = '';
     });
   }
 
+  // ---- category (#1) — Option A bottom sheet ----
+  function catHtml(s) {
+    return '<div class="cat-head"><span class="lbl">Category</span>' +
+      '<button class="cat-change" id="cat-change">Change ▾</button></div>' +
+      '<div><span class="cat-now">' + Mock.catEmoji(s.chosen) + ' ' +
+      Mock.escapeHtml(s.chosen) + '</span></div>';
+  }
+  function gridChips(s) {
+    return CATS.map(function (c) {
+      return '<span class="cchip' + (c === s.chosen ? ' on' : '') + '" data-c="' +
+        Mock.escapeHtml(c) + '">' + Mock.catEmoji(c) + ' ' + Mock.escapeHtml(c) + '</span>';
+    }).join('');
+  }
+  function wireCat(s) {
+    var btn = document.getElementById('cat-change');
+    if (btn) btn.addEventListener('click', function (e) { e.stopPropagation(); openSheet(s); });
+  }
+  function openSheet(s) {
+    var grid = document.getElementById('sheet-grid');
+    grid.innerHTML = gridChips(s);
+    grid.onclick = function (e) {
+      var ch = e.target.closest('.cchip'); if (!ch) return;
+      s.chosen = ch.getAttribute('data-c'); closeSheet(); render();
+    };
+    sheetBd.classList.add('open'); sheet.classList.add('open');
+  }
+  function closeSheet() { sheetBd.classList.remove('open'); sheet.classList.remove('open'); }
+  sheetBd.addEventListener('click', closeSheet);
+
+  // ---- decisions: swipe + buttons + stamps (#1) ----
+  function wireDecide(s) {
+    var decided = false;
+    function go(kind) {
+      if (decided) return; decided = true;
+      decisions.push({ slip: s, kind: kind });
+      var card = document.getElementById('card');
+      card.classList.add('flyout');
+      var w = window.innerWidth, dir = kind === 'ok' ? 1 : -1;
+      card.style.transform = 'translateX(' + (dir * (w + 140)) + 'px) rotate(' + (dir * 16) + 'deg)';
+      card.style.opacity = '0';
+      setTimeout(function () { cursor++; render(); }, 300);
+    }
+    document.getElementById('ok').addEventListener('click', function () { go('ok'); });
+    document.getElementById('reject').addEventListener('click', function () { go('reject'); });
+    stage._go = go;
+  }
+
+  var drag = null;
+  function wireSwipe() {
+    var card = document.getElementById('card'); if (!card) return;
+    card.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('.fpill, .btn, .cat-change')) return;
+      drag = { card: card, x0: e.clientX, y0: e.clientY, lock: null };
+      card.setPointerCapture(e.pointerId);
+    });
+    card.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+      if (drag.lock === null) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        drag.lock = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      }
+      if (drag.lock !== 'x') return;
+      e.preventDefault();
+      drag.card.style.transform = 'translateX(' + dx + 'px) rotate(' + (dx / 20) + 'deg)';
+      var frac = Math.min(Math.abs(dx) / (drag.card.offsetWidth * 0.4), 1);
+      var ok = drag.card.querySelector('.stamp.ok'), no = drag.card.querySelector('.stamp.no');
+      if (dx > 0) { ok.style.opacity = frac; no.style.opacity = 0; }
+      else { no.style.opacity = frac; ok.style.opacity = 0; }
+    });
+    function up(e) {
+      if (!drag) return;
+      var card = drag.card, dx = e.clientX - drag.x0, lock = drag.lock; drag = null;
+      var thresh = card.offsetWidth * 0.35;
+      if (lock === 'x' && Math.abs(dx) > thresh) { stage._go(dx > 0 ? 'ok' : 'reject'); }
+      else {
+        card.classList.add('springback'); card.style.transform = '';
+        var ok = card.querySelector('.stamp.ok'), no = card.querySelector('.stamp.no');
+        if (ok) ok.style.opacity = 0; if (no) no.style.opacity = 0;
+        card.addEventListener('transitionend', function () { card.classList.remove('springback'); }, { once: true });
+      }
+    }
+    card.addEventListener('pointerup', up);
+    card.addEventListener('pointercancel', up);
+  }
+
+  // ---- submit gate + status (#3) ----
   function renderDone() {
-    var confirmed = decisions.filter(function (d) { return d.kind === 'confirm'; });
-    var skipped = decisions.length - confirmed.length;
+    var bar = document.getElementById('submit-bar');
+    var ok = decisions.filter(function (d) { return d.kind === 'ok'; });
+    var rejected = decisions.length - ok.length;
+
+    if (!decisions.length) {
+      stage.innerHTML = '<div class="slip-card done-box"><h2>Inbox zero ✨</h2>' +
+        '<div class="sub">No slips waiting for review.</div></div>';
+      bar.classList.remove('show');
+      return;
+    }
+
+    bar.classList.add('show');
+    document.getElementById('submit-note').textContent =
+      ok.length + ' to submit · ' + rejected + ' rejected';
+    document.getElementById('submit-btn').textContent =
+      'Submit ' + ok.length + ' slip' + (ok.length === 1 ? '' : 's');
+    document.getElementById('submit-btn').onclick = function () { submit(ok.length, rejected); };
+
     stage.innerHTML =
-      '<div class="card done-box"><h2>All done 🎉</h2>' +
-      '<div class="soft-note">This is a mockup — nothing was saved. ' +
-      'In the real app this would have submitted ' + confirmed.length + ' slip' +
-      (confirmed.length === 1 ? '' : 's') + (skipped ? ' (and skipped ' + skipped + ')' : '') +
-      '. Use the <a href="../review.html">real Review page</a> to actually submit.</div>' +
-      '<div class="done-list">' + confirmed.map(function (d) {
-        return '<div class="feed-row"><div class="feed-left"><span>' +
-          Mock.catEmoji(d.category) + '</span><span class="feed-desc">' +
-          Mock.escapeHtml(fieldVal(d.slip, 'Description') || d.slip.filename) +
-          ' <span class="feed-sub">' + Mock.escapeHtml(d.category) + '</span></span></div>' +
-          '<span class="feed-amt">−' + Mock.fmtBaht(fieldVal(d.slip, 'Amount')) +
-          '</span></div>';
-      }).join('') + '</div></div>';
+      '<div class="slip-card done-box"><h2>Ready to submit</h2>' +
+        '<div class="sub">You confirmed <b>' + ok.length + '</b> and rejected <b>' + rejected + '</b>. ' +
+        'Nothing is saved yet — review below, then tap <b>Submit</b>. ' +
+        '(Same batch gate as the live page: it writes only on Submit, never auto-pushes.)</div>' +
+        '<div class="done-list">' + ok.map(function (d) {
+          return '<div class="feed-row"><div class="feed-left"><span>' +
+            Mock.catEmoji(d.slip.chosen) + '</span><span class="feed-desc">' +
+            Mock.escapeHtml(d.slip.edit.Description || d.slip.filename) +
+            ' <span class="feed-sub">' + Mock.escapeHtml(d.slip.chosen) + '</span></span></div>' +
+            '<span class="feed-amt">−' + Mock.fmtBaht(d.slip.edit.Amount) + '</span></div>';
+        }).join('') + '</div></div>';
     document.getElementById('progress').textContent = '';
+  }
+
+  function submit(okCount, rejected) {
+    document.getElementById('submit-bar').classList.remove('show');
+    stage.innerHTML =
+      '<div class="slip-card done-box"><h2>Submitted 🎉</h2>' +
+        '<div class="sub">This is a mockup — nothing was saved. In the real app this would have ' +
+        'committed <b>' + okCount + '</b> row' + (okCount === 1 ? '' : 's') + ' to database.csv' +
+        (rejected ? ' and rejected ' + rejected : '') + '. ' +
+        'Use the <a href="../review.html">real Review page</a> to actually submit.</div>' +
+        '<button class="replay" id="replay">↺ Run through again</button></div>';
+    document.getElementById('replay').onclick = function () {
+      cursor = 0; decisions = [];
+      slips.forEach(function (s) { s.chosen = s.cat0; s.edit = freshEdit(s); });
+      render();
+    };
+  }
+
+  // ---- bootstrap ----
+  function freshEdit(s) {
+    return { Amount: fieldVal(s, 'Amount'), Date: fieldVal(s, 'Date'),
+             Description: fieldVal(s, 'Description'), Note: fieldVal(s, 'Note') };
   }
 
   (async function () {
     try {
       slips = await DataSource.loadDrafts();
       if (!slips.length) {
-        stage.innerHTML = '<div class="card done-box"><h2>Inbox zero ✨</h2>' +
-          '<div class="soft-note">No slips waiting for review.</div></div>';
+        stage.innerHTML = '<div class="slip-card done-box"><h2>Inbox zero ✨</h2>' +
+          '<div class="sub">No slips waiting for review.</div></div>';
         return;
       }
-      renderCurrent();
+      slips.forEach(function (s) {
+        s.cat0 = fieldVal(s, 'Category') || 'Food';
+        s.chosen = s.cat0;
+        s.edit = freshEdit(s);
+      });
+      render();
     } catch (e) {
       Mock.softFail(stage, "Couldn't load slips right now. Check your connection and reload.");
     }
