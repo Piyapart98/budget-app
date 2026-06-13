@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Report — new design</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .month-nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .month-nav button{background:none;border:none;font-size:20px;color:var(--text-faint);
+                    cursor:pointer;padding:4px 10px;}
+  .story{font-size:14px;color:var(--text-soft);line-height:1.55;margin:6px 0 14px;}
+  .story b{color:var(--text);}
+  .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
+  .tile{background:#f1efe8;border-radius:12px;padding:10px;}
+  .tile .t-label{font-size:10px;color:var(--text-faint);}
+  .tile .t-val{font-size:16px;font-weight:700;}
+  .tile .t-val.green{color:var(--green);}
+  .charts{display:flex;gap:14px;align-items:center;margin-bottom:6px;}
+  .donut{width:110px;height:110px;border-radius:50%;flex:none;position:relative;}
+  .donut::after{content:'';position:absolute;inset:22px;background:var(--surface);border-radius:50%;}
+  .bars{flex:1;display:flex;align-items:flex-end;gap:6px;height:90px;}
+  .bar{flex:1;border-radius:4px 4px 0 0;background:#e8e3d6;position:relative;}
+  .bar.current{background:var(--green);}
+  .bar .b-label{position:absolute;bottom:-18px;left:0;right:0;text-align:center;
+                font-size:9px;color:var(--text-faint);}
+  .cat-row{display:flex;justify-content:space-between;padding:10px 2px;
+           border-top:1px solid var(--border);font-size:14px;}
+  .cat-row:first-child{border-top:none;}
+  .cat-share{font-size:11px;color:var(--text-faint);margin-left:6px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back-link" href="index.html">‹ Home</a>
+  <div class="month-nav">
+    <button id="prev">‹</button><h1 id="month-label">…</h1><button id="next">›</button>
+  </div>
+  <div class="story" id="story">Loading…</div>
+  <div class="tiles">
+    <div class="tile"><div class="t-label">Spent</div><div class="t-val" id="t-spent">—</div></div>
+    <div class="tile"><div class="t-label">Income</div><div class="t-val green" id="t-income">—</div></div>
+    <div class="tile"><div class="t-label">Saved</div><div class="t-val green" id="t-saved">—</div></div>
+  </div>
+  <div class="card">
+    <div class="charts">
+      <div class="donut" id="donut"></div>
+      <div class="bars" id="bars"></div>
+    </div>
+  </div>
+  <div class="section-title">Where it went</div>
+  <div class="card" id="cats"><div class="soft-note">Loading…</div></div>
+</div>
+<script src="../data-source.js"></script>
+<script src="mock-shared.js"></script>
+<script>
+(function () {
+  'use strict';
+  var PALETTE = ['#1a6b3c','#b08a3a','#7d8db0','#a4674f','#5e8d7a','#8a6fa8',
+                 '#c2783f','#4f7da4','#9aa44f','#a44f6e','#6b6354','#d0c8b8'];
+  var rows = null, isIncome = null;
+  var cur = new Date(); cur.setDate(1);
+
+  function key(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+  function label(d) { return d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }); }
+  function shiftMonth(d, n) { var x = new Date(d); x.setMonth(x.getMonth() + n); return x; }
+
+  function totalsFor(mk) {
+    var spent = 0, income = 0, byCat = {};
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r) || Mock.monthKey(r.Date) !== mk) return;
+      var amt = parseFloat(r.Amount) || 0;
+      if (isIncome(r.Category)) income += amt;
+      else { spent += amt; var c = (r.Category || 'Other').trim() || 'Other';
+             byCat[c] = (byCat[c] || 0) + amt; }
+    });
+    return { spent: spent, income: income, byCat: byCat };
+  }
+
+  function render() {
+    var mk = key(cur);
+    document.getElementById('month-label').textContent = label(cur);
+    var t = totalsFor(mk);
+    var prev = totalsFor(key(shiftMonth(cur, -1)));
+
+    // Story sentence
+    var ranked = Object.keys(t.byCat).map(function (c) { return [c, t.byCat[c]]; })
+      .sort(function (a, b) { return b[1] - a[1]; });
+    var story;
+    if (t.spent === 0) {
+      story = 'Nothing recorded for ' + label(cur) + ' yet.';
+    } else {
+      story = "You've spent <b>" + Mock.fmtBaht(t.spent) + '</b>';
+      if (prev.spent > 0) {
+        var diff = t.spent - prev.spent;
+        story += ' — about <b>' + Mock.fmtBaht(Math.abs(diff)) + ' ' +
+                 (diff <= 0 ? 'less' : 'more') + '</b> than last month';
+      }
+      if (ranked.length) {
+        story += '. ' + Mock.catEmoji(ranked[0][0]) + ' <b>' +
+                 Mock.escapeHtml(ranked[0][0]) + '</b> was your biggest category.';
+      } else { story += '.'; }
+    }
+    document.getElementById('story').innerHTML = story;
+
+    // Tiles
+    document.getElementById('t-spent').textContent = Mock.fmtBaht(t.spent);
+    document.getElementById('t-income').textContent = Mock.fmtBaht(t.income);
+    document.getElementById('t-saved').textContent =
+      t.income > 0 ? Math.max(0, Math.round((t.income - t.spent) / t.income * 100)) + '%' : '—';
+
+    // Donut (conic-gradient over ranked categories)
+    var donut = document.getElementById('donut');
+    if (t.spent > 0) {
+      var acc = 0, stops = ranked.map(function (e, i) {
+        var from = acc / t.spent * 100; acc += e[1];
+        return PALETTE[i % PALETTE.length] + ' ' + from + '% ' + (acc / t.spent * 100) + '%';
+      });
+      donut.style.background = 'conic-gradient(' + stops.join(',') + ')';
+    } else { donut.style.background = '#e8e3d6'; }
+
+    // Month-over-month bars: this month + 3 before it
+    var bars = document.getElementById('bars'), maxV = 0, series = [];
+    for (var i = 3; i >= 0; i--) {
+      var d = shiftMonth(cur, -i), v = totalsFor(key(d)).spent;
+      if (v > maxV) maxV = v;
+      series.push({ d: d, v: v });
+    }
+    bars.innerHTML = series.map(function (s, i) {
+      var h = maxV > 0 ? Math.max(4, Math.round(s.v / maxV * 100)) : 4;
+      return '<div class="bar' + (i === 3 ? ' current' : '') + '" style="height:' + h + '%">' +
+        '<div class="b-label">' + s.d.toLocaleDateString('en-GB', { month: 'short' }) +
+        '</div></div>';
+    }).join('');
+
+    // Ranked category list
+    var cats = document.getElementById('cats');
+    if (!ranked.length) { Mock.softFail(cats, 'No spending this month.'); }
+    else {
+      cats.innerHTML = ranked.map(function (e) {
+        var pct = Math.round(e[1] / t.spent * 100);
+        return '<div class="cat-row"><span>' + Mock.catEmoji(e[0]) + ' ' +
+          Mock.escapeHtml(e[0]) + '</span><span><b>' + Mock.fmtBaht(e[1]) +
+          '</b><span class="cat-share">' + pct + '%</span></span></div>';
+      }).join('');
+    }
+  }
+
+  document.getElementById('prev').addEventListener('click', function () {
+    if (rows) { cur = shiftMonth(cur, -1); render(); }
+  });
+  document.getElementById('next').addEventListener('click', function () {
+    if (rows) { cur = shiftMonth(cur, 1); render(); }
+  });
+
+  (async function () {
+    try {
+      var cfgP = DataSource.loadConfig().catch(function () { return null; });
+      rows = await DataSource.loadDatabase();
+      isIncome = Mock.incomeTester(await cfgP);
+      render();
+    } catch (e) {
+      document.getElementById('story').textContent =
+        "Couldn't load the report right now. Check your connection and reload.";
+      Mock.softFail(document.getElementById('cats'), "Couldn't load categories.");
+    }
+  })();
+})();
+</script>
+</body>
+</html>
