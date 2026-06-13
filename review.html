@@ -2,624 +2,463 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Review Slips — Budget Pipeline</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Review</title>
+<!-- warm-journal review v1 (2026-06-13) -->
+<link rel="stylesheet" href="warm.css">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
-  :root {
-    --bg:#f5f4f0;--surface:#ffffff;--border:#e2e0d8;--border-strong:#c8c5b8;
-    --text:#1a1917;--text-muted:#6b6860;--text-faint:#a8a59e;
-    --green:#1a6b3c;--green-bg:#edf7f1;--amber:#a05c00;--amber-bg:#fff8ed;
-    --red:#b83232;--red-bg:#fef2f2;
-    --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
-  }
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;
-       padding-bottom:84px;overflow-x:hidden;-webkit-user-select:none;user-select:none;}
-  header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 16px;position:sticky;top:0;z-index:100;}
-  .home-link{display:inline-block;font-size:11px;color:var(--text-muted);text-decoration:none;font-family:var(--mono);padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);margin-bottom:8px;}
-  .header-title{font-size:18px;font-weight:600;margin-bottom:2px;}
-  .header-sub{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-bottom:10px;}
-  .scan-status{display:inline-block;font-size:11px;font-family:var(--mono);color:var(--amber);background:var(--amber-bg);padding:3px 9px;border-radius:999px;margin:0 0 8px;border:1px solid #e8c070;}
-  .scan-status .dot{display:inline-block;width:6px;height:6px;background:var(--amber);border-radius:50%;margin-right:5px;vertical-align:middle;animation:pulse 1.2s infinite ease-in-out;}
-  @keyframes pulse{0%,100%{opacity:0.4;}50%{opacity:1;}}
-  .counter-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
-  .counter{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center;}
-  .counter-num{font-size:20px;font-weight:500;font-family:var(--mono);}
-  .counter-label{font-size:10px;color:var(--text-faint);font-family:var(--mono);}
-  .green{color:var(--green);} .red{color:var(--red);}
-
-  main{padding:16px;}
+  .topbar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
+  .progress{font-size:12px;color:var(--text-faint);}
 
   /* ---- Swipe deck ---- */
-  .deck{position:relative;width:100%;max-width:420px;margin:0 auto;height:62vh;min-height:380px;}
-  .swipe-card{position:absolute;inset:0;background:var(--surface);border:1px solid var(--border);
-    border-radius:18px;box-shadow:0 6px 22px rgba(0,0,0,0.07);display:flex;flex-direction:column;
-    overflow:hidden;transform-origin:center bottom;will-change:transform;touch-action:pan-y;}
-  /* peek styling for the 1-2 cards behind the top one */
-  .swipe-card.peek1{transform:scale(0.945) translateY(14px);opacity:0.85;}
-  .swipe-card.peek2{transform:scale(0.89) translateY(28px);opacity:0.6;}
-  .swipe-card.hidden-card{display:none;}
-  .swipe-card.glow-confirm{box-shadow:0 6px 30px rgba(26,107,60,0.45);border-color:#86c9a3;}
-  .swipe-card.glow-reject{box-shadow:0 6px 30px rgba(184,50,50,0.4);border-color:#f0a0a0;}
-  .swipe-card.flyout{transition:transform 0.32s ease-out,opacity 0.32s ease-out;}
-  .swipe-card.springback{transition:transform 0.25s cubic-bezier(.2,.8,.3,1);}
+  .stage{position:relative;min-height:50vh;margin-top:12px;}
+  .slip-card{background:var(--surface);border:1px solid var(--border);border-radius:18px;
+    padding:14px;box-shadow:0 4px 18px rgba(0,0,0,.07);touch-action:pan-y;position:relative;
+    will-change:transform;}
+  .slip-card.flyout{transition:transform .32s ease-out,opacity .32s ease-out;}
+  .slip-card.springback{transition:transform .25s cubic-bezier(.2,.8,.3,1);}
 
-  .card-top{position:relative;background:var(--bg);flex:0 0 auto;display:flex;align-items:center;
-    justify-content:center;min-height:160px;max-height:38vh;overflow:hidden;cursor:zoom-in;}
-  .card-top img{width:100%;height:100%;object-fit:contain;max-height:38vh;display:block;}
-  .card-top.broken{padding:24px;}
-  .card-top.broken img{display:none;}
-  .card-top .img-fallback{font-size:11px;color:var(--text-faint);font-family:var(--mono);text-align:center;word-break:break-all;padding:10px;}
-  .card-chips-head{position:absolute;top:8px;left:8px;display:flex;gap:5px;flex-wrap:wrap;}
-  .badge{font-size:10px;padding:3px 7px;border-radius:5px;font-family:var(--mono);font-weight:500;}
-  .badge-low{background:var(--amber-bg);color:var(--amber);border:1px solid #e8c070;}
-  .badge-dup{background:var(--red-bg);color:var(--red);border:1px solid #f0a0a0;}
-  .card-count{position:absolute;top:8px;right:10px;font-size:11px;color:var(--text-faint);
-    font-family:var(--mono);background:rgba(255,255,255,0.85);padding:2px 7px;border-radius:999px;}
+  .slip-img{width:100%;height:34vh;max-height:280px;object-fit:contain;background:#f4f1ea;
+    border-radius:12px;display:block;cursor:zoom-in;}
+  .slip-img.empty{display:flex;align-items:center;justify-content:center;color:var(--text-faint);
+    font-size:12px;text-align:center;padding:18px;}
 
-  /* stamps */
-  .stamp{position:absolute;top:22px;font-size:30px;font-weight:600;letter-spacing:1px;
-    padding:5px 14px;border:3px solid;border-radius:10px;opacity:0;pointer-events:none;
-    font-family:var(--sans);text-transform:uppercase;}
-  .stamp.confirm{left:18px;color:var(--green);border-color:var(--green);transform:rotate(-14deg);}
-  .stamp.reject{right:18px;color:var(--red);border-color:var(--red);transform:rotate(14deg);}
+  .amount{font-family:var(--serif);font-size:30px;font-weight:400;margin:12px 0 2px;}
 
-  .card-fields{flex:1 1 auto;overflow-y:auto;padding:10px 12px;}
-  .chip-row{display:flex;flex-wrap:wrap;gap:7px;}
-  .chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);
-    border-radius:999px;padding:6px 11px;font-size:13px;font-family:var(--mono);cursor:pointer;
-    transition:border-color 0.15s,background 0.15s;max-width:100%;}
-  .chip:active{background:#ececff00;}
-  .chip .chip-key{font-size:9px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.5px;}
-  .chip .chip-val{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;}
-  .chip.low{background:var(--amber-bg);border-color:#e8c070;}
-  .chip.empty{color:var(--amber);border-style:dashed;}
-  .chip.editing{cursor:default;background:var(--surface);border-color:var(--border-strong);}
-  .chip-input{font-size:13px;font-family:var(--mono);border:none;outline:none;background:transparent;
-    color:var(--text);min-width:90px;max-width:200px;}
-  select.chip-input{min-width:130px;}
+  /* editable field pills (#2) */
+  .fields{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 2px;}
+  .fpill{display:inline-flex;align-items:center;gap:6px;background:var(--bg);
+    border:1px solid var(--border);border-radius:999px;padding:6px 11px;font-size:13px;cursor:text;}
+  .fpill .k{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);}
+  .fpill .v{font-weight:500;}
+  .fpill.empty .v{color:var(--amber-text);}
+  .fpill.editing{background:var(--surface);border-color:#c8c0ae;}
+  .fpill input{font-size:13px;font-family:var(--sans);border:none;outline:none;background:transparent;
+    color:var(--text);min-width:70px;max-width:180px;}
+  .edit-hint{font-size:11px;color:var(--text-faint);margin:3px 2px 0;}
 
-  /* tap-button fallback */
-  .deck-actions{display:flex;gap:14px;justify-content:center;align-items:center;margin:18px auto 0;max-width:420px;}
-  .round-btn{width:62px;height:62px;border-radius:50%;border:1px solid var(--border);background:var(--surface);
-    font-size:24px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.06);display:flex;align-items:center;justify-content:center;transition:transform 0.1s;}
-  .round-btn:active{transform:scale(0.92);}
-  .round-btn.reject{color:var(--red);} .round-btn.confirm{color:var(--green);}
-  .round-btn.undo{width:46px;height:46px;font-size:18px;color:var(--text-muted);}
-  .round-btn:disabled{opacity:0.35;cursor:not-allowed;}
+  /* category (#1) — Option A bottom sheet */
+  .cat-head{display:flex;align-items:center;justify-content:space-between;margin:14px 0 0;}
+  .cat-head .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);}
+  .cat-now{display:inline-flex;align-items:center;gap:7px;background:var(--green);color:#fff;
+    border-radius:999px;padding:7px 14px;font-size:14px;font-weight:600;margin-top:7px;}
+  .cat-change{background:none;border:none;color:var(--green);font-size:13px;font-weight:600;
+    cursor:pointer;font-family:var(--sans);padding:4px;}
 
-  .empty-state{padding:60px 20px;text-align:center;color:var(--text-muted);font-family:var(--mono);font-size:13px;line-height:1.7;}
-  .empty-state .big{font-size:40px;margin-bottom:14px;}
-  .empty-state .hint{font-size:11px;color:var(--text-faint);margin-top:14px;}
-  .error-state{padding:30px 20px;text-align:center;color:var(--red);font-family:var(--mono);font-size:12px;background:var(--red-bg);border-radius:10px;margin:16px;}
+  /* tap buttons */
+  .actions{display:flex;gap:10px;margin-top:16px;}
+  .actions .btn{flex:1;}
+  .actions .btn-ok{flex:2;}
 
-  .lightbox{position:fixed;inset:0;background:rgba(0,0,0,0.92);display:none;align-items:center;justify-content:center;z-index:200;cursor:zoom-out;padding:20px;}
-  .lightbox.visible{display:flex;}
-  .lightbox img{max-width:100%;max-height:100%;object-fit:contain;}
+  /* Tinder stamps */
+  .stamp{position:absolute;top:24px;font-size:24px;font-weight:800;letter-spacing:1px;
+    padding:5px 14px;border:4px solid;border-radius:12px;opacity:0;pointer-events:none;
+    text-transform:uppercase;z-index:5;}
+  .stamp.ok{left:18px;color:var(--green);border-color:var(--green);transform:rotate(-13deg);}
+  .stamp.no{right:18px;color:var(--red);border-color:var(--red);transform:rotate(13deg);}
 
-  .submit-bar{position:fixed;bottom:0;left:0;right:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));background:var(--surface);border-top:1px solid var(--border);display:none;z-index:150;}
-  .submit-bar.visible{display:block;}
-  .submit-btn{width:100%;padding:14px;background:var(--text);color:var(--surface);border:none;border-radius:12px;font-size:15px;font-family:var(--sans);font-weight:600;cursor:pointer;transition:opacity 0.15s;}
-  .submit-btn:hover{opacity:0.88;} .submit-btn:disabled{opacity:0.45;cursor:not-allowed;}
-  .submit-note{font-size:11px;color:var(--text-faint);text-align:center;margin-top:6px;font-family:var(--mono);}
+  /* bottom sheet */
+  .sheet-bd{position:fixed;inset:0;background:rgba(20,18,14,.4);z-index:50;display:none;}
+  .sheet-bd.open{display:block;}
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:51;background:var(--surface);
+    border-radius:20px 20px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom));
+    transform:translateY(100%);transition:transform .25s ease;max-width:480px;margin:0 auto;
+    max-height:72vh;overflow-y:auto;}
+  .sheet.open{transform:translateY(0);}
+  .sheet h3{font-family:var(--serif);font-weight:400;font-size:18px;margin-bottom:12px;}
+  .cat-group-label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--text-faint);margin:14px 2px 8px;}
+  .cat-group-label:first-child{margin-top:0;}
+  .cat-grid{display:flex;flex-wrap:wrap;gap:7px;}
+  .cchip{display:inline-flex;align-items:center;gap:6px;background:#f1efe8;color:var(--text-soft);
+    border:1px solid transparent;border-radius:999px;font-size:13px;padding:8px 13px;cursor:pointer;}
+  .cchip.on{background:var(--green);color:#fff;}
 
-  .done-screen{display:none;padding:70px 20px;text-align:center;}
-  .done-screen.visible{display:block;}
-  .done-icon{font-size:50px;margin-bottom:14px;}
-  .done-title{font-size:20px;font-weight:600;margin-bottom:8px;}
-  .done-sub{font-size:13px;color:var(--text-muted);font-family:var(--mono);}
+  /* submit gate + done */
+  .submit-bar{position:fixed;bottom:0;left:0;right:0;z-index:40;background:var(--surface);
+    border-top:1px solid var(--border);padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    display:none;max-width:480px;margin:0 auto;}
+  .submit-bar.show{display:block;}
+  .submit-btn{width:100%;padding:14px;background:var(--text);color:var(--surface);border:none;
+    border-radius:14px;font-size:15px;font-weight:600;font-family:var(--sans);cursor:pointer;}
+  .submit-note{font-size:11px;color:var(--text-faint);text-align:center;margin-top:6px;}
+
+  .done-box{text-align:center;padding:38px 12px;}
+  .done-box h2{font-family:var(--serif);font-weight:400;font-size:23px;margin-bottom:8px;}
+  .done-box .sub{font-size:13px;color:var(--text-soft);line-height:1.5;}
+  .done-list{text-align:left;margin-top:18px;}
+  .replay{margin-top:18px;background:none;border:1px solid var(--border);border-radius:10px;
+    padding:9px 16px;font-size:13px;color:var(--text-soft);cursor:pointer;font-family:var(--sans);}
+
+  /* lightbox — tap the slip image to expand (same as the live page) */
+  .lightbox{position:fixed;inset:0;background:rgba(20,18,14,.92);z-index:60;display:none;
+    align-items:center;justify-content:center;padding:20px;cursor:zoom-out;}
+  .lightbox.open{display:flex;}
+  .lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;}
+
+  /* possible-duplicate heads-up (is_duplicate from loadDrafts) */
+  .dup-badge{display:inline-flex;align-items:center;gap:4px;margin:0 0 8px;
+    padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;
+    color:var(--red);background:rgba(193,74,60,.10);border:1px solid var(--red);}
 </style>
 </head>
 <body>
-<datalist id="note-suggestions"></datalist>
-<header>
-  <a href="./" class="home-link">← Home</a>
-  <div class="header-title">Review slips</div>
-  <div class="header-sub">pipeline v5 · review.html · swipe ↔ decide</div>
-  <div id="scan-status" class="scan-status" style="display:none;">scanning…</div>
-  <div class="counter-row">
-    <div class="counter"><div class="counter-num" id="cnt-total">0</div><div class="counter-label">total</div></div>
-    <div class="counter"><div class="counter-num green" id="cnt-confirmed">0</div><div class="counter-label">confirmed</div></div>
-    <div class="counter"><div class="counter-num red" id="cnt-rejected">0</div><div class="counter-label">rejected</div></div>
+<div class="wrap">
+  <div class="topbar">
+    <h1>Review</h1>
+    <span class="progress" id="progress"></span>
   </div>
-</header>
-
-<main id="main-content">
-  <div id="deck" class="deck"></div>
-  <div class="deck-actions" id="deck-actions" style="display:none;">
-    <button class="round-btn undo" id="btn-undo" onclick="undo()" title="Undo">↩</button>
-    <button class="round-btn reject" id="btn-reject" onclick="decideTop('rejected')" title="Reject">✕</button>
-    <button class="round-btn confirm" id="btn-confirm" onclick="decideTop('confirmed')" title="Confirm">✓</button>
-  </div>
-</main>
-
-<div id="done-screen" class="done-screen">
-  <div class="done-icon">✓</div>
-  <div class="done-title">Batch submitted</div>
-  <div class="done-sub" id="done-msg">—</div>
+  <a class="back-link" href="index.html">‹ Home</a>
+  <div class="stage" id="stage"><div class="soft-note">Loading slips…</div></div>
 </div>
+
+<!-- category bottom sheet (Option A) -->
+<div class="sheet-bd" id="sheet-bd"></div>
+<div class="sheet" id="sheet">
+  <h3>Choose a category</h3>
+  <div id="sheet-grid"></div>
+</div>
+
+<div class="lightbox" id="lightbox"><img id="lightbox-img" alt=""></div>
 
 <div class="submit-bar" id="submit-bar">
-  <button class="submit-btn" id="submit-btn" onclick="submitBatch()">Submit batch</button>
-  <div class="submit-note" id="submit-note">confirmed rows will write to database.csv</div>
+  <button class="submit-btn" id="submit-btn">Submit</button>
+  <div class="submit-note" id="submit-note"></div>
 </div>
 
-<div class="lightbox" id="lightbox" onclick="closeLightbox()"><img id="lightbox-img" alt=""></div>
-
 <script src="data-source.js"></script>
+<script src="warm-shared.js"></script>
 <script>
-// =========================================================================
-// Edit-then-swipe review (spec: 2026-06-07-home-and-swipe-review-ux-design.md)
-//
-// All data flows through DataSource (data-source.js), which branches Mac/Flask
-// (local) vs GitHub Pages (github). This file is byte-identical in 03_reports/
-// and for_github_repo/ — keep it that way. The batch gate is preserved:
-// swiping/tapping only marks decisions in memory; nothing writes to
-// database.csv until "Submit batch".
-// =========================================================================
+// Warm Journal review (graduated from the mockup). Reads via DataSource.loadDrafts/
+// loadSlipImage; Submit is the real batch gate (DataSource.submitReview) — nothing
+// writes until Submit. local → POST /api/review/submit; github → database.csv repo writes.
+(function () {
+  'use strict';
+  // Must match review.html CAT_GROUPS (both Spending and Income/Savings shown).
+  var CAT_GROUPS = [
+    { group: 'Spending', items: ['Food','Drinks and Snacks','Transport','Health / Necessaries',
+        'Shopping','Groceries','Utilities and Subs','Sports','Social Expenses / Donation',
+        'With Roong','To Mom','Other'] },
+    { group: 'Income / Savings', items: ['Salary','Bonus','Reimbursement','Payback from someone',
+        'Provident Fund','Mutual Fund','Coop Account','Saving for EOY Tax Deduction',
+        'Interest payment'] },
+  ];
 
-// Categories must match KNOWN_CATEGORIES in run_pipeline.py exactly.
-const CAT_GROUPS = [
-  { group: 'Spending', items: [
-      'Food','Drinks and Snacks','Transport','Health / Necessaries','Shopping',
-      'Groceries','Utilities and Subs','Sports','Social Expenses / Donation',
-      'With Roong','To Mom','Other',
-  ]},
-  { group: 'Income / Savings', items: [
-      'Salary','Bonus','Reimbursement','Payback from someone',
-      'Provident Fund','Mutual Fund','Coop Account',
-      'Saving for EOY Tax Deduction','Interest payment',
-  ]},
-];
+  var slips = [], cursor = 0, decisions = [], curSrc = null;
+  var stage = document.getElementById('stage');
+  var sheetBd = document.getElementById('sheet-bd'), sheet = document.getElementById('sheet');
+  var lightbox = document.getElementById('lightbox');
 
-// Editable fields, in card order. type drives the inline editor input.
-const FIELD_DEFS = [
-  { key:'Amount',      type:'number' },
-  { key:'Note',        type:'note'   },
-  { key:'Date',        type:'date'   },
-  { key:'Category',    type:'cat'    },
-  { key:'Description', type:'text'   },
-];
-
-// --- State ---------------------------------------------------------------
-let slips = [];        // [{id, filename, image_path, slip_path, slip_type, status, dup, edited, fields:{key->{val,conf}}}]
-let cursor = 0;        // index of the top (current) card in slips
-let history = [];      // undo stack of cursor positions that were decided
-const imgCache = {};   // id -> resolved <img> src (data: URL or path)
-
-const POLL_MS = 2500;
-let pollTimer = null;
-let scanDone = true;   // becomes false only if a loadScanStatus() reports scanning
-
-// --- Bootstrap -----------------------------------------------------------
-async function load() {
-  try {
-    const cfgP = DataSource.loadConfig().catch(() => null);
-    await refreshDrafts();
-    const cfg = await cfgP;
-    if (cfg) buildNoteDatalist(cfg);
-    // Scan status / polling is Mac-only (background OCR worker). On GitHub the
-    // method is absent — drafts.json refreshes hourly via the Action instead.
-    if (typeof DataSource.loadScanStatus === 'function') {
-      await refreshScanStatus();
-      if (!scanDone) startPolling();
-    }
-    render();
-  } catch (e) {
-    showError('Failed to load drafts: ' + (e && e.message ? e.message : e));
+  function openLightbox() {
+    if (!curSrc) return;
+    document.getElementById('lightbox-img').src = curSrc;
+    lightbox.classList.add('open');
   }
-}
+  lightbox.addEventListener('click', function () { lightbox.classList.remove('open'); });
 
-function buildNoteDatalist(config) {
-  const dl = document.getElementById('note-suggestions');
-  if (!dl) return;
-  const cards = (config.cards || []).map(c =>
-    `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (xx${escapeHtml(c.last4)})</option>`);
-  const extras = (config.extra_note_suggestions || []).map(v =>
-    `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`);
-  dl.innerHTML = cards.concat(extras).join('');
-}
-
-function draftToSlip(d) {
-  const fields = {};
-  FIELD_DEFS.forEach(fd => {
-    const raw = (d.fields || {})[fd.key];
-    fields[fd.key] = {
-      val:  (raw && raw.value != null) ? String(raw.value) : '',
-      conf: (raw && raw.confidence)    ? raw.confidence    : 'low',
-    };
-  });
-  return {
-    id:         d.id,
-    filename:   d.filename,
-    image_path: d.image_path,
-    slip_path:  d.slip_path,
-    slip_type:  d.slip_type || '',
-    status:     'pending',
-    dup:        !!d.is_duplicate,
-    edited:     false,
-    fields,
-  };
-}
-
-async function refreshDrafts() {
-  // Merge the current draft list into `slips` without clobbering user edits or
-  // decisions. New drafts append; drafts the source no longer knows about drop.
-  const incoming = (await DataSource.loadDrafts()) || [];
-  const incomingIds = new Set(incoming.map(d => d.id));
-  const existingIds = new Set(slips.map(s => s.id));
-  let changed = false;
-  for (const d of incoming) {
-    if (!existingIds.has(d.id)) { slips.push(draftToSlip(d)); changed = true; }
+  function fieldVal(slip, key) {
+    var f = (slip.fields || {})[key];
+    return (f && f.value != null) ? String(f.value) : '';
   }
-  const before = slips.length;
-  slips = slips.filter(s => incomingIds.has(s.id));
-  if (slips.length !== before) changed = true;
-  // Keep cursor pointing at the first still-pending card.
-  if (cursor > slips.length) cursor = slips.length;
-  document.getElementById('cnt-total').textContent = slips.length;
-  if (changed) { preloadImages(); render(); }
-  else preloadImages();
-}
-
-async function refreshScanStatus() {
-  let s;
-  try { s = await DataSource.loadScanStatus(); } catch (e) { return; }
-  const pill = document.getElementById('scan-status');
-  if (s && s.status === 'scanning') {
-    pill.style.display = 'inline-block';
-    pill.innerHTML = `<span class="dot"></span>scanning… ${s.done} of ${s.total} done`;
-    scanDone = false;
-  } else if (s && s.status === 'error') {
-    pill.style.display = 'inline-block';
-    pill.style.background = 'var(--red-bg)'; pill.style.color = 'var(--red)';
-    pill.style.borderColor = '#f0a0a0';
-    pill.textContent = `scan error: ${s.error || 'unknown'}`;
-    scanDone = true;
-  } else {
-    pill.style.display = 'none';
-    scanDone = true;
-  }
-}
-
-function startPolling() {
-  if (pollTimer) return;
-  pollTimer = setInterval(async () => {
-    try { await refreshDrafts(); await refreshScanStatus(); }
-    catch (e) { /* transient */ }
-    if (scanDone) { clearInterval(pollTimer); pollTimer = null; }
-  }, POLL_MS);
-}
-
-// Resolve slip images lazily through DataSource.loadSlipImage (local: a /slips
-// path; github: a data: URL via ghGet). Cache by id.
-async function preloadImages() {
-  for (let i = cursor; i < Math.min(cursor + 3, slips.length); i++) {
-    const s = slips[i];
-    if (s.id in imgCache) continue;
-    imgCache[s.id] = null; // mark in-flight
-    try { imgCache[s.id] = await DataSource.loadSlipImage(s); }
-    catch (e) { imgCache[s.id] = ''; }
-    if (i === cursor) render();
-  }
-}
-
-// --- Rendering -----------------------------------------------------------
-function escapeHtml(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g,
-    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-function updateCounters() {
-  const confirmed = slips.filter(s => s.status === 'confirmed').length;
-  const rejected  = slips.filter(s => s.status === 'rejected').length;
-  document.getElementById('cnt-confirmed').textContent = confirmed;
-  document.getElementById('cnt-rejected').textContent  = rejected;
-  const decidedAny = confirmed + rejected > 0;
-  const pending = slips.length - confirmed - rejected;
-  document.getElementById('submit-bar').className = 'submit-bar' + (decidedAny ? ' visible' : '');
-  const note = document.getElementById('submit-note');
-  if (note) {
-    note.textContent = pending > 0
-      ? `${confirmed} to commit · ${rejected} to reject · ${pending} still pending`
-      : `${confirmed} to commit · ${rejected} to reject`;
-  }
-  document.getElementById('btn-undo').disabled = history.length === 0;
-}
-
-function chipHtml(s, fd) {
-  const f = s.fields[fd.key];
-  const isEmpty = !f.val;
-  const cls = 'chip' + (f.conf === 'low' ? ' low' : '') + (isEmpty ? ' empty' : '');
-  const label = isEmpty ? `+ ${fd.key.toLowerCase()}`
-                        : `<span class="chip-key">${fd.key}</span><span class="chip-val">${escapeHtml(f.val)}</span>`;
-  return `<button type="button" class="${cls}" data-field="${fd.key}"
-            onclick="editChip(event,'${fd.key}')">${label}</button>`;
-}
-
-function cardInner(s, idx) {
-  const low = Object.values(s.fields).filter(f => f.conf === 'low').length;
-  const src = imgCache[s.id];
-  const imgHtml = src
-    ? `<img src="${src}" alt="${escapeHtml(s.filename)}"
-         onerror="this.parentElement.classList.add('broken');this.parentElement.querySelector('.img-fallback').style.display='block';">`
-    : '';
-  return `
-    <div class="card-top" onclick="openLightbox('${escapeHtml(s.id)}')">
-      ${imgHtml}
-      <div class="img-fallback" style="display:${src ? 'none' : 'block'}">${escapeHtml(s.filename)}</div>
-      <div class="card-chips-head">
-        ${s.dup ? '<span class="badge badge-dup">duplicate?</span>' : ''}
-        ${low > 0 ? `<span class="badge badge-low">${low} low conf</span>` : ''}
-      </div>
-      <div class="card-count">${idx + 1}/${slips.length}</div>
-      <div class="stamp confirm">Confirm</div>
-      <div class="stamp reject">Reject</div>
-    </div>
-    <div class="card-fields" onclick="event.stopPropagation()">
-      <div class="chip-row">${FIELD_DEFS.map(fd => chipHtml(s, fd)).join('')}</div>
-    </div>`;
-}
-
-function render() {
-  const deck = document.getElementById('deck');
-  const actions = document.getElementById('deck-actions');
-
-  // Done / empty states
-  if (slips.length === 0) {
-    actions.style.display = 'none';
-    if (!scanDone) {
-      deck.innerHTML = `<div class="empty-state"><div class="big">⏳</div>Waiting for first slip…
-        <div class="hint">OCR is running in the background.</div></div>`;
-    } else {
-      deck.innerHTML = `<div class="empty-state"><div class="big">📥</div>No pending slips.
-        <div class="hint">Upload a slip; drafts refresh automatically.</div></div>`;
-    }
-    updateCounters();
-    return;
+  function setProgress() {
+    document.getElementById('progress').textContent =
+      (slips.length && cursor < slips.length) ? (cursor + 1) + ' of ' + slips.length : '';
   }
 
-  if (cursor >= slips.length) {
-    // Deck cleared — every slip decided. Prompt to submit.
-    actions.style.display = 'none';
-    const confirmed = slips.filter(s => s.status === 'confirmed').length;
-    const rejected  = slips.filter(s => s.status === 'rejected').length;
-    deck.innerHTML = `<div class="empty-state"><div class="big">🎉</div>All ${slips.length} reviewed.
-      <div class="hint">${confirmed} to commit · ${rejected} to reject<br>Tap “Submit batch” below.</div></div>`;
-    updateCounters();
-    return;
+  function render() {
+    setProgress();
+    if (cursor >= slips.length) return renderDone();
+    var s = slips[cursor];
+
+    stage.innerHTML =
+      '<div class="slip-card" id="card">' +
+        '<div class="stamp ok">Looks right</div>' +
+        '<div class="stamp no">Reject</div>' +
+        '<img class="slip-img" id="slip-img" alt="slip">' +
+        (s.is_duplicate ? '<div class="dup-badge">⚠ possible duplicate</div>' : '') +
+        '<div class="amount" id="amount">' + Mock.fmtBaht(s.edit.Amount) + '</div>' +
+        fieldsHtml(s) +
+        '<div class="edit-hint">Tap a field above to fix it.</div>' +
+        catHtml(s) +
+        '<div class="actions">' +
+          '<button class="btn btn-ghost" id="reject">Reject</button>' +
+          '<button class="btn btn-green btn-ok" id="ok">Looks right ✓</button>' +
+        '</div>' +
+      '</div>';
+
+    curSrc = null;
+    DataSource.loadSlipImage(s).then(function (src) {
+      var img = document.getElementById('slip-img');
+      if (img && src) {
+        img.src = src; curSrc = src;
+        img.addEventListener('click', function (e) { e.stopPropagation(); openLightbox(); });
+      } else if (img) { img.classList.add('empty'); img.outerHTML =
+        '<div class="slip-img empty" id="slip-img">' + Mock.escapeHtml(s.filename || 'no image') + '</div>'; }
+    }).catch(function () {});
+
+    wireFields(s);
+    wireCat(s);
+    wireDecide(s);
+    wireSwipe();
   }
 
-  actions.style.display = 'flex';
-  // Render up to 3 stacked cards (top + 2 peeks), top last so it's on top.
-  let html = '';
-  for (let depth = 2; depth >= 0; depth--) {
-    const idx = cursor + depth;
-    if (idx >= slips.length) continue;
-    const peek = depth === 0 ? '' : (depth === 1 ? 'peek1' : 'peek2');
-    html += `<div class="swipe-card ${peek}" data-depth="${depth}" id="card-${idx}">${cardInner(slips[idx], idx)}</div>`;
+  // ---- editable fields (#2) ----
+  function fieldsHtml(s) {
+    var defs = [['Date', s.edit.Date || ''], ['Description', s.edit.Description || ''],
+                ['Note', s.edit.Note || '']];
+    return '<div class="fields">' +
+      // Amount is shown big above; offer an Amount pill too for quick edit.
+      '<span class="fpill" data-f="Amount"><span class="k">Amount</span>' +
+        '<span class="v">' + Mock.escapeHtml(s.edit.Amount || '0') + '</span></span>' +
+      defs.map(function (d) {
+        var empty = !d[1];
+        return '<span class="fpill' + (empty ? ' empty' : '') + '" data-f="' + d[0] + '">' +
+          '<span class="k">' + d[0] + '</span><span class="v">' +
+          Mock.escapeHtml(empty ? '+ add ' + d[0].toLowerCase() : d[1]) + '</span></span>';
+      }).join('') + '</div>';
   }
-  deck.innerHTML = html;
-  attachSwipe();
-  updateCounters();
-}
+  function wireFields(s) {
+    Array.prototype.forEach.call(stage.querySelectorAll('.fpill'), function (p) {
+      p.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (p.classList.contains('editing')) return;
+        var key = p.getAttribute('data-f');
+        var cur = s.edit[key] || '';
+        var type = key === 'Amount' ? 'number' : key === 'Date' ? 'date' : 'text';
+        p.classList.remove('empty');
+        p.classList.add('editing');
+        p.innerHTML = '<span class="k">' + key + '</span>' +
+          '<input type="' + type + '" value="' + Mock.escapeHtml(cur) + '">';
+        var inp = p.querySelector('input'); inp.focus();
+        try { inp.select && inp.select(); } catch (_) {}
+        function done() { s.edit[key] = inp.value; render(); }
+        inp.addEventListener('blur', done);
+        inp.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); inp.blur(); }
+        });
+      });
+    });
+  }
 
-// --- Inline chip editing -------------------------------------------------
-function editChip(ev, key) {
-  ev.stopPropagation();
-  const s = slips[cursor];
-  if (!s) return;
-  const chip = ev.currentTarget;
-  if (chip.classList.contains('editing')) return;
-  const f = s.fields[key];
-  const def = FIELD_DEFS.find(d => d.key === key);
-  chip.classList.add('editing');
-  chip.innerHTML = `<span class="chip-key">${key}</span>` + inputHtml(def, f.val);
-  const input = chip.querySelector('.chip-input');
-  input.focus();
-  if (input.select) try { input.select(); } catch (e) {}
-  const commit = () => { commitChip(key, input.value); };
-  input.addEventListener('change', commit);
-  input.addEventListener('blur', commit);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
-}
-
-function inputHtml(def, val) {
-  if (def.type === 'cat') {
-    const blank = `<option value="" ${val === '' ? 'selected' : ''}>— blank —</option>`;
-    const groups = CAT_GROUPS.map(g => {
-      const opts = g.items.map(x =>
-        `<option value="${escapeHtml(x)}" ${x === val ? 'selected' : ''}>${escapeHtml(x)}</option>`).join('');
-      return `<optgroup label="${escapeHtml(g.group)}">${opts}</optgroup>`;
+  // ---- category (#1) — Option A bottom sheet ----
+  function catHtml(s) {
+    return '<div class="cat-head"><span class="lbl">Category</span>' +
+      '<button class="cat-change" id="cat-change">Change ▾</button></div>' +
+      '<div><span class="cat-now">' + Mock.catEmoji(s.chosen) + ' ' +
+      Mock.escapeHtml(s.chosen) + '</span></div>';
+  }
+  function gridChips(s) {
+    return CAT_GROUPS.map(function (g) {
+      var chips = g.items.map(function (c) {
+        return '<span class="cchip' + (c === s.chosen ? ' on' : '') + '" data-c="' +
+          Mock.escapeHtml(c) + '">' + Mock.catEmoji(c) + ' ' + Mock.escapeHtml(c) + '</span>';
+      }).join('');
+      return '<div class="cat-group-label">' + Mock.escapeHtml(g.group) + '</div>' +
+        '<div class="cat-grid">' + chips + '</div>';
     }).join('');
-    return `<select class="chip-input">${blank}${groups}</select>`;
   }
-  if (def.type === 'note')
-    return `<input class="chip-input" type="text" list="note-suggestions" value="${escapeHtml(val)}" placeholder="type or pick a card">`;
-  if (def.type === 'number')
-    return `<input class="chip-input" type="number" min="0" step="1" value="${escapeHtml(val)}">`;
-  if (def.type === 'date')
-    return `<input class="chip-input" type="date" value="${escapeHtml(val)}">`;
-  return `<input class="chip-input" type="text" value="${escapeHtml(val)}" placeholder="(blank)">`;
-}
-
-function commitChip(key, val) {
-  const s = slips[cursor];
-  if (!s) return;
-  const f = s.fields[key];
-  if (f.val !== val) { f.val = val; f.conf = 'high'; s.edited = true; }
-  render();
-}
-
-// --- Decisions (swipe / button / undo) -----------------------------------
-function decideTop(status) {
-  if (cursor >= slips.length) return;
-  const card = document.getElementById('card-' + cursor);
-  const dir = status === 'confirmed' ? 1 : -1;
-  if (card) flyOff(card, dir, () => applyDecision(status));
-  else applyDecision(status);
-}
-
-function applyDecision(status) {
-  if (cursor >= slips.length) return;
-  slips[cursor].status = status;
-  history.push(cursor);
-  cursor += 1;
-  preloadImages();
-  render();
-}
-
-function undo() {
-  if (history.length === 0) return;
-  const last = history.pop();
-  slips[last].status = 'pending';
-  cursor = last;
-  render();
-}
-
-function flyOff(card, dir, done) {
-  card.classList.add('flyout');
-  const w = window.innerWidth;
-  card.style.transform = `translateX(${dir * (w + 120)}px) rotate(${dir * 18}deg)`;
-  card.style.opacity = '0';
-  let called = false;
-  const finish = () => { if (called) return; called = true; done(); };
-  card.addEventListener('transitionend', finish, { once: true });
-  setTimeout(finish, 360); // fallback if transitionend doesn't fire
-}
-
-// --- Pointer-event swipe on the top card ---------------------------------
-let drag = null;
-function attachSwipe() {
-  const card = document.getElementById('card-' + cursor);
-  if (!card) return;
-  card.addEventListener('pointerdown', onDown);
-}
-
-function onDown(e) {
-  if (e.target.closest('.chip')) return;          // don't drag while editing/tapping a chip
-  const card = e.currentTarget;
-  drag = { card, startX: e.clientX, startY: e.clientY, dx: 0, dy: 0, locked: null, id: e.pointerId };
-  card.setPointerCapture(e.pointerId);
-  card.addEventListener('pointermove', onMove);
-  card.addEventListener('pointerup', onUp);
-  card.addEventListener('pointercancel', onUp);
-}
-
-function onMove(e) {
-  if (!drag) return;
-  drag.dx = e.clientX - drag.startX;
-  drag.dy = e.clientY - drag.startY;
-  // Decide axis once past a small dead-zone; let vertical gestures scroll.
-  if (drag.locked === null) {
-    if (Math.abs(drag.dx) < 8 && Math.abs(drag.dy) < 8) return;
-    drag.locked = Math.abs(drag.dx) > Math.abs(drag.dy) ? 'x' : 'y';
+  function wireCat(s) {
+    var btn = document.getElementById('cat-change');
+    if (btn) btn.addEventListener('click', function (e) { e.stopPropagation(); openSheet(s); });
   }
-  if (drag.locked !== 'x') return;
-  e.preventDefault();
-  const rot = drag.dx / 18;
-  drag.card.style.transform = `translateX(${drag.dx}px) rotate(${rot}deg)`;
-  const frac = Math.min(Math.abs(drag.dx) / (drag.card.offsetWidth * 0.35), 1);
-  const confirmStamp = drag.card.querySelector('.stamp.confirm');
-  const rejectStamp  = drag.card.querySelector('.stamp.reject');
-  if (drag.dx > 0) {
-    confirmStamp.style.opacity = frac; rejectStamp.style.opacity = 0;
-    drag.card.classList.add('glow-confirm'); drag.card.classList.remove('glow-reject');
-  } else {
-    rejectStamp.style.opacity = frac; confirmStamp.style.opacity = 0;
-    drag.card.classList.add('glow-reject'); drag.card.classList.remove('glow-confirm');
+  function openSheet(s) {
+    var grid = document.getElementById('sheet-grid');
+    grid.innerHTML = gridChips(s);
+    grid.onclick = function (e) {
+      var ch = e.target.closest('.cchip'); if (!ch) return;
+      s.chosen = ch.getAttribute('data-c'); closeSheet(); render();
+    };
+    sheetBd.classList.add('open'); sheet.classList.add('open');
   }
-}
+  function closeSheet() { sheetBd.classList.remove('open'); sheet.classList.remove('open'); }
+  sheetBd.addEventListener('click', closeSheet);
 
-function onUp(e) {
-  if (!drag) return;
-  const { card, dx, locked } = drag;
-  card.removeEventListener('pointermove', onMove);
-  card.removeEventListener('pointerup', onUp);
-  card.removeEventListener('pointercancel', onUp);
-  const threshold = card.offsetWidth * 0.35;
-  const d = drag; drag = null;
-  if (locked === 'x' && Math.abs(dx) > threshold) {
-    const dir = dx > 0 ? 1 : -1;
-    flyOff(card, dir, () => applyDecision(dir > 0 ? 'confirmed' : 'rejected'));
-  } else {
-    // spring back
-    card.classList.add('springback');
-    card.style.transform = '';
-    card.classList.remove('glow-confirm', 'glow-reject');
-    const cs = card.querySelector('.stamp.confirm'), rs = card.querySelector('.stamp.reject');
-    if (cs) cs.style.opacity = 0; if (rs) rs.style.opacity = 0;
-    card.addEventListener('transitionend', () => card.classList.remove('springback'), { once: true });
+  // ---- decisions: swipe + buttons + stamps (#1) ----
+  function wireDecide(s) {
+    var decided = false;
+    function go(kind) {
+      if (decided) return; decided = true;
+      decisions.push({ slip: s, kind: kind });
+      var card = document.getElementById('card');
+      card.classList.add('flyout');
+      var w = window.innerWidth, dir = kind === 'ok' ? 1 : -1;
+      card.style.transform = 'translateX(' + (dir * (w + 140)) + 'px) rotate(' + (dir * 16) + 'deg)';
+      card.style.opacity = '0';
+      setTimeout(function () { cursor++; render(); }, 300);
+    }
+    document.getElementById('ok').addEventListener('click', function () { go('ok'); });
+    document.getElementById('reject').addEventListener('click', function () { go('reject'); });
+    stage._go = go;
   }
-}
 
-// --- Lightbox ------------------------------------------------------------
-function openLightbox(id) {
-  const src = imgCache[id];
-  if (!src) return;
-  document.getElementById('lightbox-img').src = src;
-  document.getElementById('lightbox').classList.add('visible');
-}
-function closeLightbox() { document.getElementById('lightbox').classList.remove('visible'); }
+  var drag = null;
+  function wireSwipe() {
+    var card = document.getElementById('card'); if (!card) return;
+    card.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('.fpill, .btn, .cat-change')) return;
+      drag = { card: card, x0: e.clientX, y0: e.clientY, lock: null };
+      card.setPointerCapture(e.pointerId);
+    });
+    card.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+      if (drag.lock === null) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        drag.lock = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      }
+      if (drag.lock !== 'x') return;
+      e.preventDefault();
+      drag.card.style.transform = 'translateX(' + dx + 'px) rotate(' + (dx / 20) + 'deg)';
+      var frac = Math.min(Math.abs(dx) / (drag.card.offsetWidth * 0.4), 1);
+      var ok = drag.card.querySelector('.stamp.ok'), no = drag.card.querySelector('.stamp.no');
+      if (dx > 0) { ok.style.opacity = frac; no.style.opacity = 0; }
+      else { no.style.opacity = frac; ok.style.opacity = 0; }
+    });
+    function up(e) {
+      if (!drag) return;
+      var card = drag.card, dx = e.clientX - drag.x0, lock = drag.lock; drag = null;
+      var thresh = card.offsetWidth * 0.35;
+      if (lock === 'x' && Math.abs(dx) > thresh) { stage._go(dx > 0 ? 'ok' : 'reject'); }
+      else {
+        card.classList.add('springback'); card.style.transform = '';
+        var ok = card.querySelector('.stamp.ok'), no = card.querySelector('.stamp.no');
+        if (ok) ok.style.opacity = 0; if (no) no.style.opacity = 0;
+        card.addEventListener('transitionend', function () { card.classList.remove('springback'); }, { once: true });
+      }
+    }
+    card.addEventListener('pointerup', up);
+    card.addEventListener('pointercancel', up);
+  }
 
-// --- Submit (batch gate) -------------------------------------------------
-// Warn before the page unloads mid-submit. A submit is several GitHub writes;
-// leaving partway used to strand drafts.json (queue still showed the slips even
-// though they'd committed). submitReview is now idempotent, but blocking the
-// accidental tap keeps the spinner uninterrupted.
-function blockUnload(e) { e.preventDefault(); e.returnValue = ''; return ''; }
+  // ---- submit gate + status (#3) ----
+  function renderDone() {
+    var bar = document.getElementById('submit-bar');
+    var ok = decisions.filter(function (d) { return d.kind === 'ok'; });
+    var rejected = decisions.length - ok.length;
 
-async function submitBatch() {
-  const btn = document.getElementById('submit-btn');
-  btn.disabled = true; btn.textContent = 'Submitting…';
-  const homeBtn = document.querySelector('.home-link');
-  if (homeBtn) homeBtn.style.pointerEvents = 'none';
-  window.addEventListener('beforeunload', blockUnload);
-  const finish = () => {
-    window.removeEventListener('beforeunload', blockUnload);
-    if (homeBtn) homeBtn.style.pointerEvents = '';
-  };
+    if (!decisions.length) {
+      stage.innerHTML = '<div class="slip-card done-box"><h2>Inbox zero ✨</h2>' +
+        '<div class="sub">No slips waiting for review.</div></div>';
+      bar.classList.remove('show');
+      return;
+    }
 
-  const decisions = slips
-    .filter(s => s.status !== 'pending')
-    .map(s => {
-      const dec = {
+    bar.classList.add('show');
+    document.getElementById('submit-note').textContent =
+      ok.length + ' to submit · ' + rejected + ' rejected';
+    document.getElementById('submit-btn').textContent =
+      'Submit ' + ok.length + ' slip' + (ok.length === 1 ? '' : 's');
+    document.getElementById('submit-btn').onclick = function () { submit(ok.length, rejected); };
+
+    stage.innerHTML =
+      '<div class="slip-card done-box"><h2>Ready to submit</h2>' +
+        '<div class="sub">You confirmed <b>' + ok.length + '</b> and rejected <b>' + rejected + '</b>. ' +
+        'Nothing is saved yet — review below, then tap <b>Submit</b>. ' +
+        'It writes only on Submit — never auto-pushes.</div>' +
+        '<div class="done-list">' + ok.map(function (d) {
+          return '<div class="feed-row"><div class="feed-left"><span>' +
+            Mock.catEmoji(d.slip.chosen) + '</span><span class="feed-desc">' +
+            Mock.escapeHtml(d.slip.edit.Description || d.slip.filename) +
+            ' <span class="feed-sub">' + Mock.escapeHtml(d.slip.chosen) + '</span></span></div>' +
+            '<span class="feed-amt">−' + Mock.fmtBaht(d.slip.edit.Amount) + '</span></div>';
+        }).join('') + '</div></div>';
+    document.getElementById('progress').textContent = '';
+  }
+
+  // Did the user change anything vs the OCR-extracted original? Drives the
+  // extraction-feedback log on the Mac path (ocr_corrections.csv).
+  function wasEdited(s) {
+    if (s.chosen !== s.cat0) return true;
+    return ['Amount', 'Date', 'Description', 'Note'].some(function (k) {
+      return String(s.edit[k] || '') !== String(s.orig[k] || '');
+    });
+  }
+
+  // Block an accidental navigation/refresh mid-submit (a batch is several
+  // GitHub writes; leaving partway used to strand drafts.json). Mirrors the
+  // live page's blockUnload.
+  function blockUnload(e) { e.preventDefault(); e.returnValue = ''; return ''; }
+
+  // Real batch gate — nothing writes until here. Reuses DataSource.submitReview
+  // (local → POST /api/review/submit; github → database.csv then drafts.json
+  // then best-effort archive). Idempotent + commit-time Date+Amount dedup.
+  async function submit(okCount, rejected) {
+    var btn = document.getElementById('submit-btn');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    window.addEventListener('beforeunload', blockUnload);
+
+    var decs = decisions.map(function (d) {
+      var s = d.slip;
+      var dec = {
         id: s.id, slip_path: s.slip_path, filename: s.filename,
         image_path: s.image_path, slip_type: s.slip_type,
-        decision: s.status, edited: s.edited,
+        decision: d.kind === 'ok' ? 'confirmed' : 'rejected',
+        edited: wasEdited(s),
       };
-      if (s.status === 'confirmed') {
-        dec.fields = {};
-        Object.keys(s.fields).forEach(k => { dec.fields[k] = s.fields[k].val; });
+      if (dec.decision === 'confirmed') {
+        dec.fields = {
+          Date:        s.edit.Date || '',
+          Description: s.edit.Description || '',
+          Amount:      s.edit.Amount || '',
+          Category:    s.chosen || '',
+          Note:        s.edit.Note || '',
+        };
       }
       return dec;
     });
 
-  try {
-    const data = await DataSource.submitReview(decisions, txt => { btn.textContent = txt; });
-    finish();
-    document.getElementById('main-content').style.display = 'none';
-    document.getElementById('submit-bar').className = 'submit-bar';
-    document.getElementById('done-screen').className = 'done-screen visible';
-    const c = (data && data.confirmed != null) ? data.confirmed : decisions.filter(d => d.decision === 'confirmed').length;
-    const r = (data && data.rejected  != null) ? data.rejected  : decisions.filter(d => d.decision === 'rejected').length;
-    let msg = `${c} row(s) committed · ${r} rejected`;
-    if (data && data.archive_failed) msg += ` · ${data.archive_failed} image(s) left in inbox (harmless)`;
-    document.getElementById('done-msg').textContent = msg;
-  } catch (e) {
-    finish();
-    btn.disabled = false; btn.textContent = 'Submit batch';
-    alert('Submit failed: ' + (e && e.message ? e.message : e));
+    try {
+      var data = await DataSource.submitReview(decs, function (txt) {
+        btn.textContent = txt;
+      });
+      window.removeEventListener('beforeunload', blockUnload);
+      document.getElementById('submit-bar').classList.remove('show');
+      var c = (data && data.confirmed != null) ? data.confirmed : okCount;
+      var r = (data && data.rejected  != null) ? data.rejected  : rejected;
+      var extra = (data && data.archive_failed)
+        ? ' · ' + data.archive_failed + ' image(s) left in inbox (harmless)' : '';
+      stage.innerHTML =
+        '<div class="slip-card done-box"><h2>Submitted 🎉</h2>' +
+          '<div class="sub"><b>' + c + '</b> row' + (c === 1 ? '' : 's') +
+          ' committed · <b>' + r + '</b> rejected' + extra + '.</div></div>';
+      document.getElementById('progress').textContent = '';
+    } catch (e) {
+      window.removeEventListener('beforeunload', blockUnload);
+      btn.disabled = false;
+      btn.textContent = 'Submit ' + okCount + ' slip' + (okCount === 1 ? '' : 's');
+      Mock.softFail(stage,
+        'Submit failed: ' + (e && e.message ? e.message : e) + ' — nothing was lost, try again.');
+    }
   }
-}
 
-function showError(msg) {
-  document.getElementById('deck').innerHTML = `<div class="error-state">${escapeHtml(msg)}</div>`;
-  document.getElementById('deck-actions').style.display = 'none';
-}
+  // ---- bootstrap ----
+  function freshEdit(s) {
+    return { Amount: fieldVal(s, 'Amount'), Date: fieldVal(s, 'Date'),
+             Description: fieldVal(s, 'Description'), Note: fieldVal(s, 'Note') };
+  }
 
-load();
+  (async function () {
+    try {
+      slips = await DataSource.loadDrafts();
+      if (!slips.length) {
+        stage.innerHTML = '<div class="slip-card done-box"><h2>Inbox zero ✨</h2>' +
+          '<div class="sub">No slips waiting for review.</div></div>';
+        return;
+      }
+      slips.forEach(function (s) {
+        s.cat0 = fieldVal(s, 'Category') || 'Food';
+        s.chosen = s.cat0;
+        s.edit = freshEdit(s);
+        s.orig = freshEdit(s);   // snapshot of OCR originals → drives the `edited` flag
+      });
+      render();
+    } catch (e) {
+      Mock.softFail(stage, "Couldn't load slips right now. Check your connection and reload.");
+    }
+  })();
+})();
 </script>
 </body>
 </html>
