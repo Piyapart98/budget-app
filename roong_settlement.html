@@ -6,151 +6,148 @@
 <title>Roong Settlement — Budget</title>
 <script src="data-source.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap');
+  /* Warm Journal theme (matches home / monthly report / review). */
   :root{
-    --bg:#f5f4f0;--surface:#fff;--border:#e2e0d8;
-    --text:#1a1917;--text-muted:#6b6860;--text-faint:#a8a59e;
-    --green:#1a6b3c;--green-bg:#edf7f1;--green-border:#b2ddc4;
-    --amber:#a05c00;--amber-bg:#fff8ed;
-    --red:#b83232;--red-bg:#fef2f2;
-    --blue:#1a4fa0;--blue-bg:#eef3fc;--blue-border:#b8ccee;
-    --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+    --bg:#f7f5f1; --surface:#fffdfa; --border:#efe9de;
+    --text:#2b2620; --text-soft:#6b6354; --text-faint:#a09a8c;
+    --green:#1a6b3c; --green-soft:#e9f2ec; --green-border:#b2ddc4;
+    --amber-bg:#fff8ef; --amber-border:#f0e4d2; --amber-text:#7a5a2a;
+    --red:#a4453a; --red-bg:#fdf0ee;
+    --serif:Georgia,'Times New Roman',serif;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mono:ui-monospace,Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:var(--sans);background:var(--bg);color:var(--text);padding-bottom:env(safe-area-inset-bottom,24px);}
-  header{background:var(--surface);border-bottom:1px solid var(--border);padding:16px;}
-  .header-label{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-bottom:2px;}
-  .header-title{font-size:22px;font-weight:500;}
-  .home-btn{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted);text-decoration:none;font-family:var(--mono);padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);margin-bottom:8px;}
-  .home-btn:hover{background:var(--surface);}
-  main{padding:14px 16px;}
+  body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);}
+  .wrap{max-width:480px;margin:0 auto;padding:28px 20px 60px;}
+  .back-link{font-size:13px;color:var(--text-faint);text-decoration:none;}
+  h1{font-family:var(--serif);font-size:24px;font-weight:400;margin-top:6px;}
+  .dateline{font-size:12px;color:var(--text-faint);margin:2px 0 16px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+    padding:16px;margin-bottom:12px;box-shadow:0 2px 10px rgba(0,0,0,.04);}
+  .section-title{font-family:var(--serif);font-size:17px;margin:18px 0 10px;color:var(--text);}
 
-  /* Section titles */
-  .section-title{font-size:13px;font-weight:500;margin-bottom:10px;margin-top:20px;color:var(--text-muted);text-transform:uppercase;font-family:var(--mono);letter-spacing:.04em;}
-  .section-title:first-child{margin-top:0;}
+  /* Hero summary */
+  .hero{background:linear-gradient(135deg,#1a6b3c,#2e8b57);border:none;color:#fff;border-radius:16px;
+    padding:18px;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.06);}
+  .hero-label{font-size:11px;opacity:.85;}
+  .hero-amount{font-size:30px;font-weight:700;margin:3px 0 4px;}
+  .hero-note{font-size:12px;opacity:.85;}
 
   /* Expense row (unsettled) */
-  .expense-row{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;display:flex;align-items:flex-start;gap:10px;transition:opacity .2s,border-color .2s;}
-  .expense-row.unchecked{opacity:0.55;}
-  .expense-row input[type=checkbox]{width:18px;height:18px;flex-shrink:0;margin-top:2px;accent-color:var(--green);cursor:pointer;}
-  .expense-body{flex:1;min-width:0;}
-  .exp-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
-  .exp-desc{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .exp-total{font-family:var(--mono);font-size:13px;color:var(--text-muted);flex-shrink:0;}
-  .exp-meta{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-top:2px;}
-  .share-inputs{display:flex;align-items:center;gap:6px;margin-top:8px;}
-  .share-inputs label{font-size:11px;color:var(--text-muted);font-family:var(--mono);white-space:nowrap;}
-  .share-inputs input{font-family:var(--mono);font-size:13px;border:1px solid var(--border);border-radius:5px;padding:5px 7px;background:var(--bg);color:var(--text);width:80px;-webkit-appearance:none;}
+  .roong-row{display:flex;gap:11px;align-items:flex-start;}
+  .roong-row.unchecked{opacity:.5;}
+  .roong-row input[type=checkbox]{width:19px;height:19px;flex-shrink:0;margin-top:2px;accent-color:var(--green);cursor:pointer;}
+  .rr-body{flex:1;min-width:0;}
+  .rr-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline;}
+  .rr-desc{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rr-total{font-weight:600;white-space:nowrap;}
+  .rr-meta{font-size:11px;color:var(--text-faint);margin-top:2px;}
+  .share-inputs{display:flex;align-items:center;gap:6px;margin-top:9px;}
+  .share-inputs input{font-size:14px;border:1px solid var(--border);border-radius:8px;padding:7px 9px;
+    background:var(--bg);color:var(--text);width:84px;-webkit-appearance:none;}
   .share-inputs input:focus{outline:2px solid var(--green);outline-offset:-1px;border-color:transparent;}
-  .share-sep{font-size:11px;color:var(--text-faint);font-family:var(--mono);}
-  .share-preview{font-size:11px;color:var(--green);font-family:var(--mono);margin-top:3px;}
+  .share-sep{font-size:12px;color:var(--text-faint);}
+  .share-preview{font-size:12px;color:var(--green);margin-top:5px;}
+
+  /* Select-all */
+  .select-all-row{display:flex;align-items:center;gap:9px;padding:2px 2px 12px;cursor:pointer;user-select:none;}
+  .select-all-row input[type=checkbox]{width:19px;height:19px;flex-shrink:0;accent-color:var(--green);cursor:pointer;}
+  .select-all-label{font-size:13px;color:var(--text-soft);}
 
   /* Summary bar */
-  .summary-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 16px 12px;padding-bottom:max(12px,env(safe-area-inset-bottom));margin:0 -16px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
-  .summary-info{min-width:0;}
-  .summary-count{font-size:11px;color:var(--text-muted);font-family:var(--mono);}
-  .summary-total{font-size:18px;font-weight:500;font-family:var(--mono);}
-  .summary-her{font-size:11px;color:var(--green);font-family:var(--mono);margin-top:1px;}
-  .btn-send{background:var(--green);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:500;font-family:var(--sans);cursor:pointer;white-space:nowrap;flex-shrink:0;-webkit-tap-highlight-color:transparent;}
-  .btn-send:disabled{background:var(--border);color:var(--text-faint);cursor:default;}
+  .summary-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);
+    margin:14px -20px 0;padding:14px 20px;padding-bottom:max(14px,env(safe-area-inset-bottom));
+    display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .summary-count{font-size:11px;color:var(--text-soft);}
+  .summary-total{font-size:20px;font-weight:700;}
+  .summary-her{font-size:11px;color:var(--green);}
+  .btn-send{background:var(--green);color:#fff;border:none;border-radius:12px;padding:12px 18px;
+    font-size:15px;font-weight:600;font-family:var(--sans);white-space:nowrap;flex-shrink:0;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .btn-send:disabled{background:#dcd6ca;color:var(--text-faint);cursor:default;}
   .btn-send:not(:disabled):active{background:#155a32;}
 
   /* Pending batch card */
-  .batch-card{background:var(--surface);border:1px solid var(--blue-border);border-radius:10px;padding:14px;margin-bottom:12px;}
-  .batch-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;}
-  .batch-id{font-family:var(--mono);font-size:11px;color:var(--text-faint);}
-  .batch-amount{font-family:var(--mono);font-size:16px;font-weight:500;color:var(--blue);}
-  .batch-meta{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-bottom:12px;}
+  .batch-card .bc-head{display:flex;justify-content:space-between;align-items:baseline;}
+  .batch-card .bc-id{font-size:11px;color:var(--text-faint);}
+  .batch-card .bc-amount{font-size:18px;font-weight:700;color:var(--green);}
+  .batch-card .bc-meta{font-size:11px;color:var(--text-faint);margin:2px 0 11px;}
 
   /* Shareable text */
-  .shareable-wrap{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:10px;}
+  .shareable-wrap{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;}
   .shareable-text{font-family:var(--mono);font-size:12px;color:var(--text);white-space:pre;line-height:1.7;overflow-x:auto;}
-  .btn-copy{display:flex;align-items:center;gap:5px;font-size:12px;font-family:var(--mono);border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text-muted);padding:6px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:12px;width:fit-content;}
+  .btn-copy{display:flex;align-items:center;gap:5px;font-size:13px;border:1px solid var(--border);border-radius:10px;
+    background:var(--bg);color:var(--text-soft);padding:8px 12px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:12px;width:fit-content;}
   .btn-copy:active{background:var(--surface);}
   .btn-copy.copied{color:var(--green);border-color:var(--green-border);}
 
-  /* Select-all row */
-  .select-all-row{display:flex;align-items:center;gap:8px;padding:6px 2px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;}
-  .select-all-row input[type=checkbox]{width:18px;height:18px;flex-shrink:0;accent-color:var(--green);cursor:pointer;}
-  .select-all-label{font-size:12px;color:var(--text-muted);font-family:var(--mono);}
-
   /* Batch actions */
   .batch-actions{display:flex;gap:8px;flex-wrap:wrap;}
-  .btn-upload,.btn-confirm,.btn-cancel{flex:1;min-width:100px;padding:10px 12px;border-radius:7px;font-size:13px;font-weight:500;font-family:var(--sans);cursor:pointer;text-align:center;-webkit-tap-highlight-color:transparent;border:1px solid;}
-  .btn-upload{background:var(--bg);border-color:var(--border);color:var(--text-muted);}
+  .btn-upload,.btn-confirm,.btn-cancel{flex:1;min-width:100px;padding:11px 12px;border-radius:11px;font-size:13px;
+    font-weight:600;font-family:var(--sans);cursor:pointer;text-align:center;-webkit-tap-highlight-color:transparent;border:1px solid;}
+  .btn-upload{background:var(--bg);border-color:var(--border);color:var(--text-soft);}
   .btn-upload:active{background:var(--surface);}
   .btn-confirm{background:var(--green);border-color:var(--green);color:#fff;}
   .btn-confirm:active{background:#155a32;}
-  .btn-confirm:disabled{background:var(--border);border-color:var(--border);color:var(--text-faint);cursor:default;}
+  .btn-confirm:disabled{background:#dcd6ca;border-color:#dcd6ca;color:var(--text-faint);cursor:default;}
   .btn-cancel{background:var(--bg);border-color:var(--border);color:var(--red);}
   .btn-cancel:active{background:var(--red-bg);}
   input.slip-file-input{display:none;}
 
   /* Confirmed banner */
-  .banner{background:var(--green-bg);border:1px solid var(--green-border);border-radius:10px;padding:14px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;}
+  .banner{background:var(--green-soft);border:1px solid var(--green-border);border-radius:14px;padding:14px;margin-bottom:14px;
+    display:flex;align-items:flex-start;gap:10px;}
   .banner-icon{font-size:20px;line-height:1;flex-shrink:0;}
-  .banner-body{}
-  .banner-title{font-size:14px;font-weight:500;color:var(--green);margin-bottom:3px;}
-  .banner-meta{font-size:11px;color:var(--text-muted);font-family:var(--mono);line-height:1.6;}
+  .banner-title{font-size:14px;font-weight:600;color:var(--green);margin-bottom:3px;}
+  .banner-meta{font-size:11px;color:var(--text-soft);line-height:1.6;}
 
   /* History */
-  .hist-row{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden;cursor:pointer;-webkit-tap-highlight-color:transparent;}
-  .hist-row:active{background:#fafaf6;}
-  .hist-header{display:flex;justify-content:space-between;align-items:center;padding:12px;}
-  .hist-left{}
-  .hist-id{font-family:var(--mono);font-size:11px;color:var(--text-faint);}
-  .hist-amount{font-size:15px;font-weight:500;font-family:var(--mono);margin-top:1px;}
-  .hist-date{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-top:2px;}
+  .hist-row{background:var(--surface);border:1px solid var(--border);border-radius:14px;margin-bottom:8px;overflow:hidden;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .hist-row:active{background:#faf8f3;}
+  .hist-header{display:flex;justify-content:space-between;align-items:center;padding:13px 14px;}
+  .hist-id{font-size:11px;color:var(--text-faint);}
+  .hist-amount{font-size:15px;font-weight:600;margin-top:1px;}
+  .hist-date{font-size:11px;color:var(--text-faint);margin-top:2px;}
   .hist-right{display:flex;align-items:center;gap:6px;}
-  .hist-badge{font-size:10px;font-family:var(--mono);background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);border-radius:4px;padding:2px 6px;}
+  .hist-badge{font-size:10px;background:var(--green-soft);color:var(--green);border:1px solid var(--green-border);border-radius:6px;padding:2px 7px;}
   .hist-chev{font-size:10px;color:var(--text-faint);transition:transform .15s ease;display:inline-block;line-height:1;}
   .hist-row.open .hist-chev{transform:rotate(90deg);}
-  .hist-entries{border-top:1px dashed var(--border);padding:10px 12px;display:none;}
+  .hist-entries{border-top:1px dashed var(--border);padding:10px 14px;display:none;}
   .hist-row.open .hist-entries{display:block;}
-  .hist-entry{display:grid;grid-template-columns:48px 1fr auto;gap:8px;font-size:11px;padding:5px 0;align-items:center;}
-  .hist-entry .he-date{font-family:var(--mono);color:var(--text-faint);}
+  .hist-entry{display:grid;grid-template-columns:52px 1fr auto;gap:8px;font-size:12px;padding:5px 0;align-items:center;}
+  .hist-entry .he-date{color:var(--text-faint);}
   .hist-entry .he-desc{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .hist-entry .he-share{font-family:var(--mono);color:var(--green);text-align:right;white-space:nowrap;}
+  .hist-entry .he-share{color:var(--green);text-align:right;white-space:nowrap;}
 
-  /* Empty state */
-  .empty{padding:32px 0;text-align:center;font-size:13px;color:var(--text-faint);font-family:var(--mono);}
-
-  /* Loading */
-  .loading{padding:24px 0;text-align:center;font-size:12px;color:var(--text-faint);font-family:var(--mono);}
-
-  /* Error toast */
-  .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#333;color:#fff;font-size:12px;font-family:var(--mono);padding:8px 14px;border-radius:6px;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center;}
+  /* Empty / loading / toast */
+  .empty{padding:28px 0;text-align:center;font-size:13px;color:var(--text-faint);}
+  .loading{padding:24px 0;text-align:center;font-size:12px;color:var(--text-faint);}
+  .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#33302a;color:#fff;font-size:12px;
+    padding:8px 14px;border-radius:10px;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center;}
   .toast.show{opacity:1;}
 </style>
 </head>
 <body>
-<header>
-  <a href="./" class="home-btn">← Home</a>
-  <div class="header-label">Budget · Roong Settlement</div>
-  <div class="header-title">With Roong</div>
-</header>
-
 <div class="toast" id="toast"></div>
 
-<main id="main-content">
-  <div class="loading">Loading…</div>
-</main>
+<div class="wrap">
+  <a href="./" class="back-link">← Home</a>
+  <h1>With Roong</h1>
+  <div class="dateline">Shared expenses · settle up</div>
+  <div id="main-content"><div class="loading">Loading…</div></div>
+</div>
 
 <script>
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
 function fmtBaht(n) {
   const v = parseFloat(n) || 0;
   return '฿' + (v === Math.round(v) ? Math.round(v).toLocaleString() : v.toFixed(2));
 }
 
 function stripRoong(s) {
-  // Strip trailing "with Roong", "w Roong", "w/ Roong", "w/Roong" (case-insensitive).
-  // Two sub-patterns:
-  //   \s+with\s+roong  — "with" must be surrounded by spaces
-  //   \s+w\/?\s*roong  — "w" or "w/" with optional space before "roong"
   return (s || '')
     .replace(/\s+with\s+roong\s*$/i, '')
     .replace(/\s+w\/?\s*roong\s*$/i, '')
@@ -237,6 +234,18 @@ function render() {
   const el = document.getElementById('main-content');
   let html = '';
 
+  const checkedRows = unsettled.filter(r => r._checked);
+  const herTotal = checkedRows.reduce((s, r) => s + r._share, 0);
+
+  // --- Hero summary ---
+  const pendingTotal = pendingBatches.reduce((s, b) => s + (parseFloat(b.requested_amount) || 0), 0);
+  html += `
+  <div class="hero">
+    <div class="hero-label">Roong owes you</div>
+    <div class="hero-amount" id="hero-amount">${fmtBaht(herTotal)}</div>
+    <div class="hero-note" id="hero-note">${unsettled.length} unsettled expense${unsettled.length===1?'':'s'}${pendingTotal>0?` · ${fmtBaht(pendingTotal)} awaiting payment`:''}</div>
+  </div>`;
+
   // --- Banner (after confirm) ---
   if (lastConfirmed) {
     html += `
@@ -253,11 +262,10 @@ function render() {
   }
 
   // --- Section 1: Unsettled ---
-  const checkedRows = unsettled.filter(r => r._checked);
   html += `<div class="section-title">Unsettled (${unsettled.length})</div>`;
 
   if (unsettled.length === 0) {
-    html += `<div class="empty">No unsettled "With Roong" expenses</div>`;
+    html += `<div class="card"><div class="empty">No unsettled “With Roong” expenses</div></div>`;
   } else {
     const allChecked = unsettled.every(r => r._checked);
     const someChecked = unsettled.some(r => r._checked);
@@ -272,14 +280,14 @@ function render() {
       const amount = parseFloat(r.Amount || 0);
       const shareStr = fmtBaht(r._share);
       html += `
-      <div class="expense-row${r._checked ? '' : ' unchecked'}" id="row-${i}">
+      <div class="card roong-row${r._checked ? '' : ' unchecked'}" id="row-${i}">
         <input type="checkbox" data-idx="${i}" ${r._checked ? 'checked' : ''}>
-        <div class="expense-body">
-          <div class="exp-top">
-            <div class="exp-desc">${escHtml(desc)}</div>
-            <div class="exp-total">${fmtBaht(amount)}</div>
+        <div class="rr-body">
+          <div class="rr-top">
+            <div class="rr-desc">${escHtml(desc)}</div>
+            <div class="rr-total">${fmtBaht(amount)}</div>
           </div>
-          <div class="exp-meta">${fmtDateShort(r.Date)} · ${escHtml(r.Note||'')||'—'} · ${escHtml(r.RefID||'')}</div>
+          <div class="rr-meta">${fmtDateShort(r.Date)} · ${escHtml(r.Note||'')||'—'} · ${escHtml(r.RefID||'')}</div>
           ${r._checked ? `
           <div class="share-inputs">
             <input type="number" min="0" max="100" step="1" value="${r._pct.toFixed(0)}" data-idx="${i}" data-type="pct" placeholder="%">
@@ -294,7 +302,7 @@ function render() {
 
   // --- Section 2: Pending ---
   if (pendingBatches.length > 0) {
-    html += `<div class="section-title" style="margin-top:24px;">Pending payment (${pendingBatches.length})</div>`;
+    html += `<div class="section-title">Pending payment (${pendingBatches.length})</div>`;
     for (const batch of pendingBatches) {
       const expRows = batch.expense_rows || [];
       const shareMap = {};
@@ -302,14 +310,12 @@ function render() {
       const text = buildShareableText(expRows, shareMap);
       const n = expRows.length;
       html += `
-      <div class="batch-card" id="batch-${escHtml(batch.settlement_id)}">
-        <div class="batch-head">
-          <div>
-            <div class="batch-id">${escHtml(batch.settlement_id)}</div>
-            <div class="batch-amount">${fmtBaht(batch.requested_amount)}</div>
-          </div>
+      <div class="card batch-card" id="batch-${escHtml(batch.settlement_id)}">
+        <div class="bc-head">
+          <div><div class="bc-id">${escHtml(batch.settlement_id)}</div></div>
+          <div class="bc-amount">${fmtBaht(batch.requested_amount)}</div>
         </div>
-        <div class="batch-meta">${fmtDateShort((batch.created_at||'').substring(0,10))} · ${n} expense${n===1?'':'s'}</div>
+        <div class="bc-meta">${fmtDateShort((batch.created_at||'').substring(0,10))} · ${n} expense${n===1?'':'s'}</div>
         <div class="shareable-wrap">
           <div class="shareable-text" id="st-${escHtml(batch.settlement_id)}">${escHtml(text)}</div>
         </div>
@@ -337,15 +343,13 @@ function render() {
     }
   }
 
-  // --- Section 3: History (stub — link) ---
+  // --- Section 3: History (loaded async into placeholder) ---
   html += `
-  <div class="section-title" style="margin-top:24px;" id="history-section-title">History</div>
-  <div id="history-content"><div class="loading" style="padding:16px 0;">Loading history…</div></div>`;
+  <div class="section-title" id="history-section-title">History</div>
+  <div id="history-content"><div class="loading">Loading history…</div></div>`;
 
   // Summary bar (only show if unsettled list exists)
   if (unsettled.length > 0) {
-    const herTotal = checkedRows.reduce((s, r) => s + r._share, 0);
-    const myTotal = checkedRows.reduce((s, r) => s + (parseFloat(r.Amount||0) - r._share), 0);
     html += `
     <div class="summary-bar" id="summary-bar">
       <div class="summary-info">
@@ -369,10 +373,8 @@ function render() {
 // Event listeners (re-attached after each render)
 // ---------------------------------------------------------------------------
 function attachListeners() {
-  // Select-all checkbox
   const selectAll = document.getElementById('select-all-cb');
   if (selectAll) {
-    // Set indeterminate state (can't do in HTML)
     if (selectAll.dataset.indeterminate === 'true') selectAll.indeterminate = true;
     selectAll.addEventListener('change', () => {
       unsettled.forEach(r => { r._checked = selectAll.checked; });
@@ -380,7 +382,6 @@ function attachListeners() {
     });
   }
 
-  // Checkbox toggles
   document.querySelectorAll('input[type=checkbox][data-idx]').forEach(cb => {
     cb.addEventListener('change', () => {
       const i = parseInt(cb.dataset.idx);
@@ -389,7 +390,6 @@ function attachListeners() {
     });
   });
 
-  // Share inputs
   document.querySelectorAll('input[data-type=pct]').forEach(input => {
     input.addEventListener('input', () => {
       const i = parseInt(input.dataset.idx);
@@ -397,7 +397,6 @@ function attachListeners() {
       const amount = parseFloat(unsettled[i].Amount || 0);
       unsettled[i]._pct = pct;
       unsettled[i]._share = amount * pct / 100;
-      // Sync ฿ input without triggering its own listener
       const bahtInput = document.querySelector(`input[data-type=baht][data-idx="${i}"]`);
       if (bahtInput) bahtInput.value = unsettled[i]._share.toFixed(2);
       const preview = document.getElementById(`preview-${i}`);
@@ -413,7 +412,6 @@ function attachListeners() {
       const share = Math.max(0, parseFloat(input.value) || 0);
       unsettled[i]._share = share;
       unsettled[i]._pct = amount > 0 ? Math.round(share / amount * 100) : 0;
-      // Sync % input
       const pctInput = document.querySelector(`input[data-type=pct][data-idx="${i}"]`);
       if (pctInput) pctInput.value = unsettled[i]._pct;
       const preview = document.getElementById(`preview-${i}`);
@@ -427,14 +425,18 @@ function updateSummaryBar() {
   const checkedRows = unsettled.filter(r => r._checked);
   const herTotal = checkedRows.reduce((s, r) => s + r._share, 0);
   const bar = document.getElementById('summary-bar');
-  if (!bar) return;
-  bar.querySelector('.summary-total').textContent = fmtBaht(herTotal);
-  bar.querySelector('.summary-count').textContent = `${checkedRows.length} selected`;
-  const btn = document.getElementById('btn-send');
-  if (btn) {
-    btn.disabled = checkedRows.length === 0;
-    btn.textContent = checkedRows.length > 0 ? `Send request (${checkedRows.length})` : 'Send request';
+  if (bar) {
+    bar.querySelector('.summary-total').textContent = fmtBaht(herTotal);
+    bar.querySelector('.summary-count').textContent = `${checkedRows.length} selected`;
+    const btn = document.getElementById('btn-send');
+    if (btn) {
+      btn.disabled = checkedRows.length === 0;
+      btn.textContent = checkedRows.length > 0 ? `Send request (${checkedRows.length})` : 'Send request';
+    }
   }
+  // Hero amount tracks the selected-share total live.
+  const hero = document.getElementById('hero-amount');
+  if (hero) hero.textContent = fmtBaht(herTotal);
 }
 
 // ---------------------------------------------------------------------------
@@ -581,7 +583,7 @@ async function onConfirmed(data) {
     DataSource.loadRoongUnsettled(),
     DataSource.loadRoongPending(),
   ]);
-  unsettled = u.map(r => ({...r, _pct:50, _share:parseFloat(r.Amount||0)*0.5, _checked:true}));
+  unsettled = mapUnsettled(u);
   pendingBatches = p;
   render();
   window.scrollTo({top:0, behavior:'smooth'});
