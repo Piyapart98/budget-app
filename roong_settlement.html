@@ -119,6 +119,8 @@
   .hist-entry .he-date{color:var(--text-faint);}
   .hist-entry .he-desc{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .hist-entry .he-share{color:var(--green);text-align:right;white-space:nowrap;}
+  .show-all{padding:12px 2px 4px;text-align:center;font-size:13px;color:var(--green);font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .show-all:active{opacity:.6;}
 
   /* Empty / loading / toast */
   .empty{padding:28px 0;text-align:center;font-size:13px;color:var(--text-faint);}
@@ -592,6 +594,44 @@ async function onConfirmed(data) {
 // ---------------------------------------------------------------------------
 // History (loaded separately, injected into placeholder)
 // ---------------------------------------------------------------------------
+// Settlements older than the 30-day window, held back until the user taps "show earlier".
+let historyOlder = [];
+
+function histRowHtml(batch) {
+  const expRows = batch.expense_rows || [];
+  const n = expRows.length;
+  return `
+  <div class="hist-row" onclick="this.classList.toggle('open')">
+    <div class="hist-header">
+      <div class="hist-left">
+        <div class="hist-id">${escHtml(batch.settlement_id)}</div>
+        <div class="hist-amount">${fmtBaht(batch.requested_amount)}</div>
+        <div class="hist-date">${fmtDateShort((batch.created_at||'').substring(0,10))} · ${n} expense${n===1?'':'s'}</div>
+      </div>
+      <div class="hist-right">
+        <span class="hist-badge">settled</span>
+        <span class="hist-chev">▶</span>
+      </div>
+    </div>
+    <div class="hist-entries">
+      ${expRows.length ? expRows.sort((a,b)=>(a.Date||'')<(b.Date||'')?-1:1).map(r => `
+      <div class="hist-entry">
+        <div class="he-date">${fmtDateShort(r.Date)}</div>
+        <div class="he-desc">${escHtml(r.Description||'')}</div>
+        <div class="he-share">${fmtBaht(r.roong_share)}</div>
+      </div>`).join('') : '<div class="hist-entry" style="grid-column:1/-1;color:var(--text-faint);">No rows</div>'}
+    </div>
+  </div>`;
+}
+
+function showAllHistory() {
+  const more = document.getElementById('history-more');
+  if (!more) return;
+  more.insertAdjacentHTML('beforebegin', historyOlder.map(histRowHtml).join(''));
+  more.remove();
+  historyOlder = [];
+}
+
 async function loadHistory() {
   try {
     const history = await DataSource.loadRoongHistory();
@@ -601,32 +641,23 @@ async function loadHistory() {
       el.innerHTML = `<div class="empty">No settled batches yet</div>`;
       return;
     }
-    let html = '';
-    for (const batch of history) {
-      const expRows = batch.expense_rows || [];
-      const n = expRows.length;
-      html += `
-      <div class="hist-row" onclick="this.classList.toggle('open')">
-        <div class="hist-header">
-          <div class="hist-left">
-            <div class="hist-id">${escHtml(batch.settlement_id)}</div>
-            <div class="hist-amount">${fmtBaht(batch.requested_amount)}</div>
-            <div class="hist-date">${fmtDateShort((batch.created_at||'').substring(0,10))} · ${n} expense${n===1?'':'s'}</div>
-          </div>
-          <div class="hist-right">
-            <span class="hist-badge">settled</span>
-            <span class="hist-chev">▶</span>
-          </div>
-        </div>
-        <div class="hist-entries">
-          ${expRows.length ? expRows.sort((a,b)=>(a.Date||'')<(b.Date||'')?-1:1).map(r => `
-          <div class="hist-entry">
-            <div class="he-date">${fmtDateShort(r.Date)}</div>
-            <div class="he-desc">${escHtml(r.Description||'')}</div>
-            <div class="he-share">${fmtBaht(r.roong_share)}</div>
-          </div>`).join('') : '<div class="hist-entry" style="grid-column:1/-1;color:var(--text-faint);">No rows</div>'}
-        </div>
-      </div>`;
+    // Newest first, then split into the last 30 days vs older.
+    const sorted = [...history].sort((a,b) => (a.created_at||'') < (b.created_at||'') ? 1 : -1);
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const recent = [], older = [];
+    for (const b of sorted) {
+      const t = Date.parse((b.created_at||'').substring(0,10));
+      if (!isNaN(t) && t >= cutoff) recent.push(b); else older.push(b);
+    }
+    // If nothing falls in the last 30 days, still show the 3 most recent so the
+    // section isn't empty when history exists.
+    let shown;
+    if (recent.length) { shown = recent; historyOlder = older; }
+    else { shown = older.slice(0, 3); historyOlder = older.slice(3); }
+
+    let html = shown.map(histRowHtml).join('');
+    if (historyOlder.length) {
+      html += `<div class="show-all" id="history-more" onclick="showAllHistory()">Show earlier settlements (${historyOlder.length}) ›</div>`;
     }
     el.innerHTML = html;
   } catch(e) {
