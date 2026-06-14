@@ -262,6 +262,24 @@
     return { content: fromBase64(data.content || ''), sha: data.sha };
   }
 
+  // Per-page-load read cache (GitHub mode). The Roong settlement page reads the
+  // same big file (database.csv) from three call sites — unsettled, pending, and
+  // history — plus settlements.csv twice. Without caching that's the large
+  // database.csv downloaded 3× on every open. ghGetCached fetches each path once
+  // and hands back the in-flight promise (so even the parallel unsettled+pending
+  // calls share one request). Any write (ghPut) clears the cache, so reloads
+  // after a submit/confirm/cancel see fresh data — same freshness as before.
+  var _ghReadCache = {};
+  function ghGetCached(path) {
+    if (_ghReadCache[path]) return _ghReadCache[path];
+    var p = ghGet(path);
+    _ghReadCache[path] = p;
+    // Don't cache a failure — drop it so a retry can refetch.
+    p.catch(function () { if (_ghReadCache[path] === p) delete _ghReadCache[path]; });
+    return p;
+  }
+  function invalidateGhReadCache() { _ghReadCache = {}; }
+
   // PUT a file. Pass null sha for new files. Returns the response JSON.
   async function ghPut(path, content, sha, message) {
     var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
@@ -283,6 +301,9 @@
       e.status = res.status;
       throw e;
     }
+    // A write may have changed any cached file — drop the read cache so the next
+    // read refetches from GitHub.
+    invalidateGhReadCache();
     return res.json();
   }
 
@@ -337,7 +358,7 @@
       if (!res.ok) throw new Error('GET /api/database: ' + res.status);
       return res.json();
     }
-    var got = await ghGet('database.csv');
+    var got = await ghGetCached('database.csv');
     return csvToObjects(got.content);
   }
 
@@ -673,7 +694,7 @@
       if (!res.ok) throw new Error('GET /api/roong/pending: ' + res.status);
       return res.json();
     }
-    var got = await ghGet(ROONG_SETTLEMENTS_PATH);
+    var got = await ghGetCached(ROONG_SETTLEMENTS_PATH);
     var settlements = csvToObjects(got.content);
     var pending = settlements.filter(function (s) { return s.status === 'pending'; });
     var db = await loadDatabase();
@@ -686,7 +707,7 @@
       if (!res.ok) throw new Error('GET /api/roong/history: ' + res.status);
       return res.json();
     }
-    var got = await ghGet(ROONG_SETTLEMENTS_PATH);
+    var got = await ghGetCached(ROONG_SETTLEMENTS_PATH);
     var settlements = csvToObjects(got.content);
     var settled = settlements.filter(function (s) { return s.status === 'settled'; });
     settled.sort(function (a, b) {
