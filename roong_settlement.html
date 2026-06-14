@@ -359,7 +359,7 @@ function render() {
       </div>
       <button class="btn-send" id="btn-send" ${checkedRows.length===0?'disabled':''}
         onclick="sendRequest()">
-        Send request${checkedRows.length > 0 ? ` (${checkedRows.length})` : ''}
+        Generate Text${checkedRows.length > 0 ? ` (${checkedRows.length})` : ''}
       </button>
     </div>`;
   }
@@ -431,7 +431,7 @@ function updateSummaryBar() {
     const btn = document.getElementById('btn-send');
     if (btn) {
       btn.disabled = checkedRows.length === 0;
-      btn.textContent = checkedRows.length > 0 ? `Send request (${checkedRows.length})` : 'Send request';
+      btn.textContent = checkedRows.length > 0 ? `Generate Text (${checkedRows.length})` : 'Generate Text';
     }
   }
   // Hero amount tracks the selected-share total live.
@@ -465,7 +465,7 @@ async function sendRequest() {
   } catch(e) {
     showToast('Error: ' + e.message);
     btn.disabled = false;
-    btn.textContent = `Send request (${checkedRows.length})`;
+    btn.textContent = `Generate Text (${checkedRows.length})`;
   }
 }
 
