@@ -569,7 +569,12 @@
       hit.generated_at = snap.generated_at;
       return hit;
     }
-    return { cards: cards, generated_at: snap.generated_at };
+    return {
+      cards: cards,
+      generated_at: snap.generated_at,
+      upload_errors: snap.upload_errors || {},
+      duplicate_notes: snap.duplicate_notes || {},
+    };
   }
 
   // archiveStatement — move a verified statement PDF out of the inbox into
