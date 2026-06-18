@@ -219,6 +219,11 @@ var cardsMap = {};
 // Empty-state card picker selection.
 var selectedCard = null;
 
+// Processing-screen poll state.
+var verifyStartedAt = null;     // ISO time the Verify was tapped (ignore older runs)
+var pendingAtVerify = [];       // pending filenames at verify time (detect completion)
+var procTimer = null;           // poll interval id
+
 // GitHub mode: the phone can't parse PDFs, so it reads a verify.json snapshot
 // the Mac writes on each run (via DataSource.loadVerification). The page still
 // works — it just shows as-of-last-Mac-run data and hides the Archive action
@@ -988,6 +993,8 @@ async function doVerify() {
   var btn = document.getElementById('verify-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
   try {
+    verifyStartedAt = new Date().toISOString();
+    pendingAtVerify = pendingFiles.slice();
     var res = await DataSource.verifyStatement(pw);
     if (pwEl) pwEl.value = '';                 // never keep the password
     renderProcessing(res && res.note);
@@ -999,15 +1006,67 @@ async function doVerify() {
 
 function renderProcessing(note) {
   var html = stepperHtml('processing', '⚙︎ reading on the server');
-  html += '<div class="state-msg" style="padding:24px 8px">' +
-          '<strong><span class="spin"></span>Processing…</strong>' +
-          'Reading the statement and matching your transactions. About a minute — then reload.' +
+  html += '<div class="state-msg" style="padding:24px 8px 8px">' +
+          '<strong><span class="spin"></span>Working on your statement…</strong>' +
+          '<span id="proc-status" style="display:block;font-size:14px;color:#3b6d11;font-weight:500;margin:6px 0 8px">Sending it to the server…</span>' +
+          'This usually takes about a minute. The page moves on by itself when it’s done — ' +
+          'you don’t have to do anything.' +
           (note ? '<br><span style="color:#888;font-size:12px">' + escHtml(note) + '</span>' : '') +
           '</div>';
-  html += '<div class="flow-actions"><button class="btn primary" id="reload-btn" ' +
-          'style="width:100%;text-align:center">Reload</button></div>';
+  html += '<div class="flow-actions"><button class="btn" id="reload-btn" ' +
+          'style="width:100%;text-align:center">Reload now</button></div>';
   document.getElementById('content').innerHTML = html;
   document.getElementById('reload-btn').addEventListener('click', function () { location.reload(); });
+  startProcessingPoll();
+}
+
+// Poll for progress so the page advances on its own. Two signals:
+//   • the uploaded PDF leaving inbox/statements/ (archived = done) → reload
+//   • the verify Action's run status → the plain-language line
+function startProcessingPoll() {
+  if (procTimer) clearInterval(procTimer);
+  var ticks = 0;
+  function setLine(t) {
+    var el = document.getElementById('proc-status');
+    if (el) el.textContent = t;
+  }
+  async function tick() {
+    ticks++;
+    if (ticks > 60) { clearInterval(procTimer); procTimer = null;   // ~5 min cap
+      setLine('Still working — tap Reload to check.'); return; }
+
+    // 1) Completion: a statement we were verifying has left the inbox (archived).
+    try {
+      var ls = await DataSource.listStatements();
+      var stillPending = (ls && ls.pending) || [];
+      var done = pendingAtVerify.some(function (n) { return stillPending.indexOf(n) === -1; });
+      if (done) {
+        clearInterval(procTimer); procTimer = null;
+        setLine('All done — loading your results…');
+        setTimeout(function () { location.reload(); }, 700);
+        return;
+      }
+    } catch (e) { /* ignore — keep polling */ }
+
+    // 2) Plain-language status from the Action run (best-effort).
+    var run = await DataSource.latestVerifyRun();
+    if (!run || (verifyStartedAt && run.created_at && run.created_at < verifyStartedAt)) {
+      setLine('Sent to the server — waiting for it to start…');
+    } else if (run.status === 'queued') {
+      setLine('In line on the server, about to start…');
+    } else if (run.status === 'in_progress') {
+      setLine('Reading your statement and matching it to your records…');
+    } else if (run.status === 'completed' && run.conclusion === 'success') {
+      setLine('All done — loading your results…');
+      clearInterval(procTimer); procTimer = null;
+      setTimeout(function () { location.reload(); }, 700);
+    } else if (run.status === 'completed') {
+      setLine('The server couldn’t finish reading it — tap Reload to see what happened.');
+      clearInterval(procTimer); procTimer = null;
+    }
+  }
+  procTimer = setInterval(tick, 5000);
+  tick();   // run immediately, don't wait 5s for the first line
 }
 
 var removing = false;

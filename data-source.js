@@ -1386,6 +1386,32 @@
     return ghDelete(path, meta.sha, 'remove uploaded statement from phone');
   }
 
+  // latestVerifyRun — status of the most recent verify-inbox Action run, for the
+  // live "what the server is doing" line. Best-effort: returns null in local mode
+  // or when no Actions token is stored (never prompts). Shape:
+  //   { status: 'queued'|'in_progress'|'completed', conclusion: 'success'|..., created_at }
+  async function latestVerifyRun() {
+    if (MODE === 'local') return null;
+    var tok = localStorage.getItem(ACTIONS_TOKEN_KEY);   // peek — do NOT prompt
+    if (!tok) return null;
+    try {
+      var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + CODE_REPO_NAME +
+                '/actions/workflows/' + VERIFY_WORKFLOW_FILE + '/runs?per_page=1&_t=' + Date.now();
+      var res = await ghFetch(url, {
+        headers: {
+          'Authorization': 'Bearer ' + tok,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        cache: 'no-store',
+      });
+      if (!res.ok) return null;
+      var d = await res.json();
+      var run = d.workflow_runs && d.workflow_runs[0];
+      return run ? { status: run.status, conclusion: run.conclusion, created_at: run.created_at } : null;
+    } catch (e) { return null; }
+  }
+
   // loadScanStatus — Mac-only (background OCR worker). Exported only in local
   // mode so review.html's `typeof DataSource.loadScanStatus === 'function'`
   // guard skips polling on the phone (drafts refresh hourly via the Action).
@@ -1436,6 +1462,7 @@
     verifyStatement:     verifyStatement,
     listStatements:      listStatements,
     removeStatement:     removeStatement,
+    latestVerifyRun:     latestVerifyRun,
 
     resetToken:          resetToken,
     resetActionsToken:   resetActionsToken,
