@@ -4,6 +4,7 @@
   --text:#2b2620; --text-soft:#6b6354; --text-faint:#a09a8c;
   --green:#1a6b3c; --green-soft:#e9f2ec;
   --amber-bg:#fff8ef; --amber-border:#f0e4d2; --amber-text:#7a5a2a;
+  --red:#a4453a; --red-bg:#fdf0ee; --red-border:#f1d6d1;
   --serif:Georgia,'Times New Roman',serif;
   --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 }
@@ -53,3 +54,59 @@ h1{font-family:var(--serif);font-size:24px;font-weight:400;color:var(--text);}
            font-size:11px;padding:5px 12px;border-radius:999px;opacity:.92;
            box-shadow:0 1px 4px rgba(0,0,0,.2);white-space:nowrap;}
 .back-link{font-size:13px;color:var(--text-faint);text-decoration:none;}
+
+/* ---------- Cards due (homepage due-date countdown) ---------- */
+.cd-list{display:flex;flex-direction:column;gap:10px;}
+.cd-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+         padding:14px 16px;box-shadow:0 2px 10px rgba(0,0,0,.04);
+         display:flex;align-items:center;gap:12px;}
+.cd-emoji{font-size:20px;line-height:1;}
+.cd-main{flex:1;min-width:0;}
+.cd-name{font-weight:600;font-size:15px;}
+.cd-sub{font-size:12px;color:var(--text-faint);margin-top:2px;}
+.cd-amt{font-weight:700;}
+.cd-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
+.cd-count{font-size:12px;color:var(--text-soft);font-weight:600;white-space:nowrap;}
+.cd-paid-btn{border:1px solid var(--border);background:var(--surface);color:var(--text-soft);
+             border-radius:999px;padding:7px 14px;font-size:13px;font-weight:600;
+             font-family:var(--sans);cursor:pointer;white-space:nowrap;}
+.cd-paid-btn:active{background:var(--bg);}
+.cd-edit{background:none;border:none;color:var(--text-faint);font-size:12px;
+         cursor:pointer;padding:0;margin-left:5px;font-family:var(--sans);}
+.cd-done{opacity:.6;}
+.cd-status{font-size:13px;color:var(--green);font-weight:600;white-space:nowrap;}
+.cd-setlink{font-size:13px;color:var(--green);font-weight:700;cursor:pointer;white-space:nowrap;
+            border:1px solid var(--green-soft);background:var(--green-soft);
+            border-radius:999px;padding:7px 12px;}
+/* Promoted (due soon ≤5d) — soft-red "alarm" */
+.cd-promoted{background:var(--red-bg);border:1px solid var(--red-border);}
+.cd-promoted .cd-name,.cd-promoted .cd-count{color:var(--red);}
+.cd-promoted .cd-paid-btn{background:var(--red);color:#fff;border-color:var(--red);}
+.cd-promoted .cd-edit{color:#c98e86;}
+/* Overdue — solid red, strongest */
+.cd-overdue{background:var(--red);border:none;color:#fff;}
+.cd-overdue .cd-name,.cd-overdue .cd-count{color:#fff;}
+.cd-overdue .cd-sub{color:rgba(255,255,255,.85);}
+.cd-overdue .cd-paid-btn{background:rgba(255,255,255,.18);color:#fff;border-color:rgba(255,255,255,.4);}
+.cd-overdue .cd-edit{color:rgba(255,255,255,.7);}
+
+/* Day-picker bottom sheet (set / change a due day) */
+.sheet-back{position:fixed;inset:0;background:rgba(20,18,14,.4);z-index:50;
+            display:none;align-items:flex-end;justify-content:center;}
+.sheet-back.open{display:flex;}
+.sheet{background:var(--surface);width:100%;max-width:480px;border-radius:20px 20px 0 0;
+       padding:20px 18px calc(20px + env(safe-area-inset-bottom));
+       box-shadow:0 -4px 24px rgba(0,0,0,.18);}
+.sheet h3{font-family:var(--serif);font-weight:400;font-size:19px;margin-bottom:4px;}
+.sheet p{font-size:12px;color:var(--text-faint);margin-bottom:14px;}
+.day-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:7px;margin-bottom:6px;}
+.day-cell{aspect-ratio:1;border:1px solid var(--border);background:var(--bg);border-radius:10px;
+          font-size:14px;color:var(--text);cursor:pointer;display:flex;align-items:center;
+          justify-content:center;font-family:var(--sans);}
+.day-cell.sel{background:var(--green);color:#fff;border-color:var(--green);font-weight:700;}
+.sheet-preview{font-size:12px;color:var(--text-soft);margin:8px 2px 14px;min-height:16px;}
+.sheet-actions{display:flex;gap:10px;}
+.sheet-actions button{flex:1;border:none;border-radius:14px;padding:13px;font-size:15px;
+                      font-weight:600;font-family:var(--sans);cursor:pointer;}
+.sheet-actions .btn-save{background:var(--green);color:#fff;}
+.sheet-actions .btn-cancel{background:#f1efe8;color:var(--text-soft);}

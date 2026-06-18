@@ -168,8 +168,16 @@ document.getElementById('f-card').addEventListener('change',async function(e){
   if(!name||!name.trim()){sel.value='';return;}
   const last4=window.prompt('Card last-4 digits (for auto-detect):');
   if(!last4||!/^\d{4}$/.test(last4.trim())){alert('Last-4 must be exactly 4 digits.');sel.value='';return;}
+  // Optional: payment due day (1-28) → drives the homepage "Cards due" countdown.
+  let dueDay=window.prompt('Payment due day of month, 1-28 (optional — leave blank to skip):');
+  dueDay=dueDay==null?'':dueDay.trim();
+  if(dueDay!==''){
+    const d=Number(dueDay);
+    if(!(Number.isInteger(d)&&d>=1&&d<=28)){alert('Due day must be a whole number 1-28.');sel.value='';return;}
+    dueDay=d;
+  }
   try{
-    cardOptions=await DataSource.saveCard(last4.trim(),name.trim());
+    cardOptions=await DataSource.saveCard(last4.trim(),name.trim(),dueDay===''?null:dueDay);
     await loadCardSelect();
     sel.value=name.trim();
   }catch(err){alert('Add card failed: '+(err&&err.message?err.message:err));sel.value='';}

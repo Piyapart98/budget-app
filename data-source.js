@@ -451,16 +451,22 @@
   // saveCard — add (or rename) a card. last4 must be 4 digits. local → POST
   // /api/cards (Mac writes cards.json + refreshes config.json); github → merge
   // into cards.json and PUT it. Returns the updated [{last4, name}, ...].
-  async function saveCard(last4, name) {
+  // Optional dueDay (1-28) also sets the card's payment due day in one step
+  // (homepage countdown) — written via card_cycles.json / /api/cards/cycles.
+  async function saveCard(last4, name, dueDay) {
     last4 = String(last4 || '').trim();
     name = String(name || '').trim();
     if (!/^\d{4}$/.test(last4)) throw new Error('Card last-4 must be exactly 4 digits.');
     if (!name) throw new Error('Card name is required.');
+    var dd = (dueDay === undefined || dueDay === null || dueDay === '') ? null : Number(dueDay);
+    if (dd !== null && !(dd >= 1 && dd <= 28)) throw new Error('Due day must be 1-28.');
     if (MODE === 'local') {
+      var payload = { last4: last4, name: name };
+      if (dd !== null) payload.due_day = dd;
       var res = await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ last4: last4, name: name }),
+        body: JSON.stringify(payload),
       });
       var data = await res.json().catch(function () { return {}; });
       if (!res.ok) throw new Error(data.error || 'POST /api/cards: ' + res.status);
@@ -471,7 +477,60 @@
     if (got.content) { try { map = JSON.parse(got.content); } catch (e) { map = {}; } }
     map[last4] = name;
     await ghPut('cards.json', JSON.stringify(map, null, 2), got.sha, 'add card from phone');
+    if (dd !== null) await saveCardCycle(last4, { due_day: dd });
     return Object.keys(map).map(function (l4) { return { last4: l4, name: map[l4] }; });
+  }
+
+  // loadCardCycles — the per-card billing-cycle config {last4: {due_day, paid_for}}
+  // for the homepage due-date countdown. local → /api/cards/cycles; github →
+  // card_cycles.json in budget-data. Returns {} when absent.
+  async function loadCardCycles() {
+    if (MODE === 'local') {
+      var res = await fetch('/api/cards/cycles');
+      if (!res.ok) throw new Error('GET /api/cards/cycles: ' + res.status);
+      return res.json();
+    }
+    var got = await ghGetCached('card_cycles.json');
+    if (!got.content) return {};
+    try { return JSON.parse(got.content); } catch (e) { return {}; }
+  }
+
+  // saveCardCycle — patch one card's cycle config. patch = {due_day?, paid_for?}.
+  // Pass due_day:null or paid_for:null to clear a field. local → POST
+  // /api/cards/cycles; github → read-merge-PUT card_cycles.json (ghPut clears the
+  // read cache). Returns the full merged {last4: {...}} map.
+  async function saveCardCycle(last4, patch) {
+    last4 = String(last4 || '').trim();
+    if (!/^\d{4}$/.test(last4)) throw new Error('Card last-4 must be exactly 4 digits.');
+    patch = patch || {};
+    if (MODE === 'local') {
+      var body = { last4: last4 };
+      if ('due_day' in patch) body.due_day = patch.due_day;
+      if ('paid_for' in patch) body.paid_for = patch.paid_for;
+      var res = await fetch('/api/cards/cycles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'POST /api/cards/cycles: ' + res.status);
+      return data;
+    }
+    var got = await ghGet('card_cycles.json');
+    var map = {};
+    if (got.content) { try { map = JSON.parse(got.content); } catch (e) { map = {}; } }
+    var entry = Object.assign({}, map[last4] || {});
+    if ('due_day' in patch) {
+      if (patch.due_day === null || patch.due_day === '') delete entry.due_day;
+      else entry.due_day = Number(patch.due_day);
+    }
+    if ('paid_for' in patch) {
+      if (!patch.paid_for) delete entry.paid_for;
+      else entry.paid_for = String(patch.paid_for);
+    }
+    map[last4] = entry;
+    await ghPut('card_cycles.json', JSON.stringify(map, null, 2), got.sha, 'set card due day from phone');
+    return map;
   }
 
   // loadVerification — statement vs DB cross-check.
@@ -1249,6 +1308,8 @@
     loadConfig:          loadConfig,
     loadCards:           loadCards,
     saveCard:            saveCard,
+    loadCardCycles:      loadCardCycles,
+    saveCardCycle:       saveCardCycle,
     loadVerification:    loadVerification,
     archiveStatement:    archiveStatement,
     submitEntry:         submitEntry,

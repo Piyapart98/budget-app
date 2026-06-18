@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Budget">
 <title>Budget</title>
-<!-- warm-journal home v1 (2026-06-14) -->
+<!-- warm-journal home v2 (2026-06-18) — + Cards due countdown -->
 <link rel="stylesheet" href="warm.css">
 </head>
 <body>
@@ -25,6 +25,9 @@
   <a class="nudge" id="nudge" href="review.html" style="display:none;">
     <span id="nudge-text">🧾 Slips to review</span><span class="chev">›</span>
   </a>
+
+  <div class="section-title" id="cards-due-title" style="display:none;">Cards due</div>
+  <div class="cd-list" id="cards-due" style="display:none;"></div>
 
   <div class="section-title">Recent spending</div>
   <div class="card" id="feed"><div class="soft-note">Loading…</div></div>
@@ -120,6 +123,236 @@
         document.getElementById('nudge').style.display = 'flex';
       }
     } catch (e) { /* stay hidden */ }
+  })();
+})();
+</script>
+
+<!-- Day-picker bottom sheet (set / change a card's payment due day) -->
+<div class="sheet-back" id="cd-sheet-back">
+  <div class="sheet">
+    <h3 id="cd-sheet-title">When is this card due?</h3>
+    <p>Pick the day of the month the payment is due.</p>
+    <div class="day-grid" id="cd-day-grid"></div>
+    <div class="sheet-preview" id="cd-sheet-preview"></div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" id="cd-sheet-cancel">Cancel</button>
+      <button class="btn-save" id="cd-sheet-save">Save due day</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Cards due — payment due-date countdown. Hybrid source: a current statement's
+   parsed due_date + balance when available, else a manually-set due day. Rollover
+   rule is "overdue until paid" — a passed due date stays overdue until the user
+   taps Mark paid (which advances paid_for to the next cycle). All derived live. */
+(function () {
+  'use strict';
+  var listEl  = document.getElementById('cards-due');
+  var titleEl = document.getElementById('cards-due-title');
+  var SOON = 5;            // promote (red) when due within this many days
+  var DAY = 86400000;
+
+  // ---- date helpers (local midnight, day-of-month occurrences) ----
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function midnight(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function isoOf(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function parseISO(s) { var p = String(s).split('-'); return new Date(+p[0], (+p[1]) - 1, +p[2]); }
+  function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+  function occ(day, y, m) { return new Date(y, m, Math.min(day, daysInMonth(y, m))); }
+  function firstOnOrAfter(day, from) {
+    var y = from.getFullYear(), m = from.getMonth(), c = occ(day, y, m);
+    if (c < from) { m++; if (m > 11) { m = 0; y++; } c = occ(day, y, m); }
+    return c;
+  }
+  function firstStrictlyAfter(day, from) {
+    var y = from.getFullYear(), m = from.getMonth(), c = occ(day, y, m);
+    while (c <= from) { m++; if (m > 11) { m = 0; y++; } c = occ(day, y, m); }
+    return c;
+  }
+  function prevOnOrBefore(day, today) {
+    var y = today.getFullYear(), m = today.getMonth(), c = occ(day, y, m);
+    while (c > today) { m--; if (m < 0) { m = 11; y--; } c = occ(day, y, m); }
+    return c;
+  }
+  function fmtDue(d) {
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  var TODAY = midnight(new Date());
+  var cardsCache = [];      // [{last4, name}]
+  var cyclesCache = {};     // {last4: {due_day, paid_for}}
+  var stmtByCard = {};      // {last4: {due_date, statement_total}}
+  var stateByCard = {};     // last computed state per last4 (for click handlers)
+
+  function computeState(card) {
+    var cy = cyclesCache[card.last4] || {};
+    var dueDay = (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null;
+    var paidFor = cy.paid_for || null;
+    var stmt = stmtByCard[card.last4] || null;
+    var s = { card: card, dueDay: dueDay };
+
+    // Statement override — only while the statement's due date is still unpaid.
+    if (stmt && stmt.due_date && (!paidFor || stmt.due_date > paidFor)) {
+      s.dueTarget = parseISO(stmt.due_date);
+      s.amount = (stmt.statement_total != null) ? stmt.statement_total : null;
+      s.fromStatement = true;
+    } else if (dueDay) {
+      s.dueTarget = paidFor ? firstStrictlyAfter(dueDay, parseISO(paidFor))
+                            : firstOnOrAfter(dueDay, TODAY);
+      s.amount = null;
+    } else {
+      s.kind = 'set'; s.sortKey = 1e9; return s;
+    }
+
+    s.days = Math.round((midnight(s.dueTarget) - TODAY) / DAY);
+
+    // Paid display: the latest (or upcoming) bill is settled and the next one
+    // isn't imminent. Never when a statement says the current bill is unpaid.
+    var prevISO = dueDay ? isoOf(prevOnOrBefore(dueDay, TODAY)) : null;
+    var paidDisplay = !s.fromStatement && paidFor && prevISO && paidFor >= prevISO && s.days > SOON;
+
+    if (paidDisplay)        { s.kind = 'paid';     s.sortKey = 1e8 + s.days; }
+    else if (s.days < 0)    { s.kind = 'overdue';  s.sortKey = s.days; }
+    else if (s.days <= SOON){ s.kind = 'promoted'; s.sortKey = s.days; }
+    else                    { s.kind = 'calm';     s.sortKey = s.days; }
+    return s;
+  }
+
+  function rowHtml(s) {
+    var c = s.card, name = Mock.escapeHtml(c.name || ('*' + c.last4));
+    if (s.kind === 'set') {
+      return cardHtml('', name, '<div class="cd-sub">no due day set</div>',
+        '<span class="cd-setlink" data-action="set" data-l4="' + c.last4 + '">Set due day ›</span>');
+    }
+    if (s.kind === 'paid') {
+      return cardHtml('cd-done', name, '<div class="cd-sub">next due ' + fmtDue(s.dueTarget) + '</div>',
+        '<span class="cd-status" data-action="undo" data-l4="' + c.last4 + '" title="tap to undo">✓ paid</span>');
+    }
+    var amt = (s.amount != null) ? '<span class="cd-amt">' + Mock.fmtBaht(s.amount) + '</span> · ' : '';
+    var sub = '<div class="cd-sub">' + amt + 'due ' + fmtDue(s.dueTarget) +
+      ' <button class="cd-edit" data-action="edit" data-l4="' + c.last4 + '" aria-label="change due day">✎</button></div>';
+    var count = s.days < 0 ? 'overdue by ' + (-s.days) + ' day' + (s.days === -1 ? '' : 's')
+      : s.days === 0 ? 'due today'
+      : s.days === 1 ? 'due tomorrow'
+      : 'in ' + s.days + ' days';
+    var right = '<span class="cd-count">' + count + '</span>' +
+      '<button class="cd-paid-btn" data-action="paid" data-l4="' + c.last4 + '">Mark paid</button>';
+    var cls = s.kind === 'overdue' ? 'cd-overdue' : s.kind === 'promoted' ? 'cd-promoted' : 'cd-calm';
+    return cardHtml(cls, name, sub, right);
+  }
+  function cardHtml(cls, name, main, right) {
+    return '<div class="cd-card ' + cls + '"><span class="cd-emoji">💳</span>' +
+      '<div class="cd-main"><div class="cd-name">' + name + '</div>' + main + '</div>' +
+      '<div class="cd-right">' + right + '</div></div>';
+  }
+
+  function hide() { titleEl.style.display = 'none'; listEl.style.display = 'none'; }
+  function render() {
+    if (!cardsCache.length) { hide(); return; }
+    var states = cardsCache.map(computeState).sort(function (a, b) { return a.sortKey - b.sortKey; });
+    stateByCard = {};
+    states.forEach(function (s) { stateByCard[s.card.last4] = s; });
+    titleEl.style.display = ''; listEl.style.display = '';
+    listEl.innerHTML = states.map(rowHtml).join('');
+  }
+
+  // ---- mutations (optimistic, revert on failure) ----
+  async function persist(l4, patch, prevCycle) {
+    try { await DataSource.saveCardCycle(l4, patch); }
+    catch (err) {
+      if (prevCycle === undefined) delete cyclesCache[l4]; else cyclesCache[l4] = prevCycle;
+      render();
+      alert("Couldn't save that just now: " + (err && err.message ? err.message : err));
+    }
+  }
+  function markPaid(l4) {
+    var s = stateByCard[l4]; if (!s || !s.dueTarget) return;
+    var iso = isoOf(midnight(s.dueTarget));
+    var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
+    cyclesCache[l4] = Object.assign({}, cyclesCache[l4], { paid_for: iso }); render();
+    persist(l4, { paid_for: iso }, prev);
+  }
+  function undoPaid(l4) {
+    var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
+    var nc = Object.assign({}, cyclesCache[l4]); delete nc.paid_for; cyclesCache[l4] = nc; render();
+    persist(l4, { paid_for: null }, prev);
+  }
+
+  listEl.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-action]'); if (!t) return;
+    var l4 = t.getAttribute('data-l4'), act = t.getAttribute('data-action');
+    if (act === 'paid') markPaid(l4);
+    else if (act === 'undo') undoPaid(l4);
+    else openSheet(l4);             // 'edit' or 'set'
+  });
+
+  // ---- day-picker sheet ----
+  var sheetBack = document.getElementById('cd-sheet-back');
+  var grid = document.getElementById('cd-day-grid');
+  var editingL4 = null, pendingDay = null;
+
+  function openSheet(l4) {
+    editingL4 = l4;
+    var cy = cyclesCache[l4] || {};
+    pendingDay = (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null;
+    var card = cardsCache.filter(function (c) { return c.last4 === l4; })[0];
+    document.getElementById('cd-sheet-title').textContent =
+      'When is ' + ((card && card.name) || ('*' + l4)) + ' due?';
+    grid.innerHTML = '';
+    for (var d = 1; d <= 28; d++) {
+      var cell = document.createElement('div');
+      cell.className = 'day-cell'; cell.textContent = d; cell.setAttribute('data-day', d);
+      grid.appendChild(cell);
+    }
+    refreshSheet();
+    sheetBack.classList.add('open');
+  }
+  function refreshSheet() {
+    Array.prototype.forEach.call(grid.querySelectorAll('.day-cell'), function (cell) {
+      cell.classList.toggle('sel', Number(cell.getAttribute('data-day')) === pendingDay);
+    });
+    var pv = document.getElementById('cd-sheet-preview');
+    if (pendingDay) {
+      var due = firstOnOrAfter(pendingDay, TODAY);
+      var days = Math.round((midnight(due) - TODAY) / DAY);
+      pv.textContent = 'Next due ' + fmtDue(due) + ' — ' + (days <= SOON ? '⚠ ' : '') +
+        (days === 0 ? 'due today' : 'in ' + days + ' day' + (days === 1 ? '' : 's')) + '.';
+    } else { pv.textContent = 'Pick a day.'; }
+  }
+  function closeSheet() { sheetBack.classList.remove('open'); }
+  grid.addEventListener('click', function (e) {
+    var cell = e.target.closest('.day-cell'); if (!cell) return;
+    pendingDay = Number(cell.getAttribute('data-day')); refreshSheet();
+  });
+  document.getElementById('cd-sheet-cancel').addEventListener('click', closeSheet);
+  sheetBack.addEventListener('click', function (e) { if (e.target === sheetBack) closeSheet(); });
+  document.getElementById('cd-sheet-save').addEventListener('click', function () {
+    if (!editingL4 || !pendingDay) { closeSheet(); return; }
+    var l4 = editingL4, day = pendingDay;
+    var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
+    var nc = Object.assign({}, cyclesCache[l4]); nc.due_day = day; delete nc.paid_for;
+    cyclesCache[l4] = nc;
+    closeSheet(); render();
+    persist(l4, { due_day: day, paid_for: null }, prev);
+  });
+
+  // ---- load ----
+  (async function () {
+    try {
+      var cardsP = DataSource.loadCards().catch(function () { return []; });
+      var cyclesP = DataSource.loadCardCycles().catch(function () { return {}; });
+      var verP = DataSource.loadVerification().catch(function () { return { cards: [] }; });
+      cardsCache = (await cardsP) || [];
+      cyclesCache = (await cyclesP) || {};
+      var ver = await verP;
+      var vcards = (ver && ver.cards) || [];
+      stmtByCard = {};
+      vcards.forEach(function (c) {
+        if (c && c.card_last4) stmtByCard[c.card_last4] = { due_date: c.due_date, statement_total: c.statement_total };
+      });
+      render();
+    } catch (e) { hide(); }
   })();
 })();
 </script>
