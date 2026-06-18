@@ -206,9 +206,7 @@ async function boot() {
     uploadErrors = data.upload_errors || {};
 
     if (IS_GH && allCards.length === 0) {
-      document.getElementById('loading-msg').innerHTML =
-        '<strong>No statements yet</strong>Nothing to verify. Run the pipeline ' +
-        'on your Mac with a statement PDF in the inbox, then reload here.';
+      renderEmptyUpload();
       return;
     }
 
@@ -772,6 +770,60 @@ async function archiveStatement(card) {
     archiving = false;
     toast('Error: ' + e.message);
   }
+}
+
+// Empty-state upload (no statements yet): a button → pick a card → file + password.
+// Self-contained with direct listeners (the #content click delegation only attaches
+// once a card panel is rendered, which never happens in the empty state).
+function renderEmptyUpload() {
+  var content = document.getElementById('content');
+  content.innerHTML =
+    '<div class="state-msg">' +
+      '<strong>No statements yet</strong>' +
+      'Upload your first statement to verify it against your database. ' +
+      'It processes on the server in ~1 minute, then reload here.' +
+    '</div>' +
+    '<div style="padding:0 14px">' +
+      '<button class="btn primary" id="empty-upload-btn" style="width:100%;text-align:center">Upload statement</button>' +
+    '</div>' +
+    '<div id="empty-upload-area" style="padding:12px 14px"></div>';
+  document.getElementById('empty-upload-btn').addEventListener('click', showEmptyCardPicker);
+}
+
+async function showEmptyCardPicker() {
+  var area = document.getElementById('empty-upload-area');
+  area.innerHTML = '<p class="empty-note">Loading cards…</p>';
+  var cards;
+  try {
+    cards = await DataSource.loadCards();   // [{last4, name}, ...]
+  } catch (e) {
+    area.innerHTML = '<p class="empty-note">Couldn’t load cards: ' + escHtml(e.message || e) + '</p>';
+    return;
+  }
+  if (!cards || !cards.length) {
+    area.innerHTML = '<p class="empty-note">No cards configured.</p>';
+    return;
+  }
+  var html = '<p class="empty-note">Which card is this statement for?</p>';
+  html += '<input type="text" id="empty-stmt-pw" placeholder="PDF password (leave blank if none)" ' +
+          'style="width:100%;margin-bottom:8px;font-size:13px;padding:7px 10px;border:0.5px solid #ccc;border-radius:8px">';
+  html += '<input type="file" accept="application/pdf" id="empty-stmt-file" style="display:none">';
+  html += '<div class="btn-row" style="flex-wrap:wrap;gap:8px">';
+  cards.forEach(function (c) {
+    html += '<button class="btn" data-empty-card="' + escAttr(c.last4) + '">' +
+            escHtml(c.name) + ' ·' + escHtml(c.last4) + '</button>';
+  });
+  html += '</div>';
+  area.innerHTML = html;
+  var fileInput = document.getElementById('empty-stmt-file');
+  var pwInput = document.getElementById('empty-stmt-pw');
+  area.querySelectorAll('[data-empty-card]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var last4 = b.getAttribute('data-empty-card');
+      fileInput.onchange = function () { handleStatementUpload(last4, fileInput, pwInput); };
+      fileInput.click();
+    });
+  });
 }
 
 async function handleStatementUpload(cardLast4, fileInput, pwInput) {
