@@ -131,6 +131,9 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 .pathchip.green{background:#eaf3de;color:#3b6d11}
 .pathchip.red{background:#fcebeb;color:#a32d2d}
 .flow-actions{margin-top:14px}
+.btn-green{background:#1a6b3c;color:#fff;border:0.5px solid #1a6b3c}
+.btn-green:active{opacity:.85}
+.btn.chip-card.sel{background:#1a6b3c;color:#fff;border-color:#1a6b3c}
 .pending-card{background:#fff;border:0.5px solid #e0e0d8;border-radius:12px;padding:13px 15px;margin-bottom:10px}
 .pending-card.err{border-color:#f7c1c1;background:#fdf6f6}
 .chip-card{margin:0}
@@ -902,7 +905,7 @@ async function renderEmptyCards() {
   });
   html += '</div>';
   html += '<input type="file" accept="application/pdf" id="empty-stmt-file" style="display:none">';
-  html += '<div class="flow-actions"><button class="btn primary" id="empty-upload-btn" ' +
+  html += '<div class="flow-actions"><button class="btn btn-green" id="empty-upload-btn" ' +
           'style="width:100%;text-align:center" disabled>Upload statement</button></div>';
   html += '<p class="empty-note" style="margin-top:8px">Card list comes from your saved cards — ' +
           'add one on the entry form and it appears here automatically.</p>';
@@ -913,8 +916,8 @@ async function renderEmptyCards() {
   area.querySelectorAll('.chip-card').forEach(function (b) {
     b.addEventListener('click', function () {
       selectedCard = b.getAttribute('data-card');
-      area.querySelectorAll('.chip-card').forEach(function (x) { x.classList.remove('primary'); });
-      b.classList.add('primary');
+      area.querySelectorAll('.chip-card').forEach(function (x) { x.classList.remove('sel'); });
+      b.classList.add('sel');
       uploadBtn.disabled = false;
     });
   });
@@ -958,16 +961,16 @@ function renderPending() {
       html += '<div class="pending-card' + (err ? ' err' : '') + '">' +
         '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">' +
         '<div style="font-weight:500">' + escHtml(cardName(l4)) + ' ·' + escHtml(l4) + '</div>' +
-        '<button class="btn muted" data-action="remove-pending" data-file="' + escAttr(n) + '" ' +
+        '<button class="btn danger" data-action="remove-pending" data-file="' + escAttr(n) + '" ' +
         'style="padding:4px 10px;flex-shrink:0">Remove</button></div>' +
         '<div style="font-size:11px;color:#888;margin-top:3px;word-break:break-all">' + escHtml(n) + '</div>' +
         '</div>';
     });
   });
 
-  html += '<input type="text" id="verify-pw" placeholder="PDF password (leave blank if none)" ' +
+  html += '<input type="password" id="verify-pw" placeholder="PDF password (leave blank if none)" ' +
           'style="width:100%;margin:8px 0;font-size:13px;padding:9px 11px;border:0.5px solid #ccc;border-radius:8px">';
-  html += '<div class="flow-actions"><button class="btn primary" id="verify-btn" ' +
+  html += '<div class="flow-actions"><button class="btn btn-green" id="verify-btn" ' +
           'style="width:100%;text-align:center">' + (hasError ? 'Verify again' : 'Verify now') + '</button></div>';
   html += '<p class="empty-note" style="margin-top:10px">The password is used once to open the PDF and never stored.</p>';
 
