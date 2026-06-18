@@ -418,9 +418,26 @@ function renderContent() {
   if (missing.length === 0) {
     html += '<p class="empty-note">All statement charges are in your database.</p>';
   } else {
+    var undecided = 0, toAdd = 0;
     missing.forEach(function (tx, idx) {
       html += renderMissingCard(card, tx, idx);
+      var ms = missingState[txId(card, idx)];
+      if (ms && !ms.committed) {
+        if (ms.decision === 'add') toAdd++;
+        else if (ms.decision !== 'skip') undecided++;
+      }
     });
+    // Commit bar — adds every "Add to DB"-staged row at once. Disabled until
+    // every row is decided (add or skip).
+    if (undecided > 0) {
+      html += '<button class="btn" id="commit-btn" disabled ' +
+              'style="width:100%;text-align:center;margin-top:6px">' +
+              'Decide every row first (' + undecided + ' left)</button>';
+    } else if (toAdd > 0) {
+      html += '<button class="btn btn-green" id="commit-btn" data-action="commit-missing" ' +
+              'style="width:100%;text-align:center;margin-top:6px">' +
+              'Commit changes (' + toAdd + ' to add)</button>';
+    }
   }
 
   // Not on statement
@@ -490,7 +507,7 @@ function renderMissingCard(card, tx, idx) {
   var st = missingState[id];
   if (!st) {
     missingState[id] = {
-      expanded: false, submitting: false, done: false, skipped: false,
+      decision: 'none', committed: false,    // 'none' | 'add' | 'skip'
       desc: tx.merchant || '',
       date: tx.date || '',
       cat: tx.predicted_category || (CATS[0] || ''),
@@ -498,70 +515,57 @@ function renderMissingCard(card, tx, idx) {
     };
     st = missingState[id];
   }
-  if (st.done) {
+
+  // Already committed to the DB this session.
+  if (st.committed) {
     return '<div class="row-card" style="opacity:.5">' +
       '<div class="row-top"><div class="row-merchant">' + escHtml(tx.merchant) + '</div>' +
       '<div class="row-amount">฿' + fmtAmt(tx.amount) + '</div></div>' +
       '<div class="row-meta">' + escHtml(fmtDate(tx.date)) + ' · Added ✓</div></div>';
   }
-  if (st.skipped) {
-    return '<div class="row-card" style="opacity:.4">' +
-      '<div class="row-top"><div class="row-merchant">' + escHtml(tx.merchant) + '</div>' +
-      '<div class="row-amount">฿' + fmtAmt(tx.amount) + '</div></div>' +
-      '<div class="row-meta">' + escHtml(fmtDate(tx.date)) + ' · Skipped</div></div>';
-  }
 
-  var html = '<div class="row-card' + (st.expanded ? ' expanded' : '') + '" data-missing-id="' + escAttr(id) + '">';
+  var html = '<div class="row-card' + (st.decision === 'add' ? ' expanded' : '') + '" data-missing-id="' + escAttr(id) + '">';
   html += '<div class="row-top">';
   html += '<div class="row-merchant">' + escHtml(tx.merchant) + '</div>';
   html += '<div class="row-amount">฿' + fmtAmt(tx.amount) + '</div>';
   html += '</div>';
   html += '<div class="row-meta">' + escHtml(fmtDate(tx.date)) + ' · ' + escHtml(card.issuer) + '</div>';
 
-  if (!st.expanded) {
+  if (st.decision === 'skip') {
+    // Staged to skip — won't be committed. Offer to switch to add.
+    html += '<div class="row-meta" style="color:#a06a1a;margin-top:6px">Will skip — won’t be added.</div>';
     html += '<div class="row-actions">';
-    html += '<button class="btn primary" data-action="expand-missing" data-id="' + escAttr(id) + '">+ Add to DB</button>';
-    html += '<button class="btn muted" data-action="skip-missing" data-id="' + escAttr(id) + '">Skip</button>';
+    html += '<button class="btn btn-green" data-action="stage-add" data-id="' + escAttr(id) + '">+ Add to DB instead</button>';
     html += '</div>';
-  } else {
+  } else if (st.decision === 'add') {
+    // Staged to add — editable prep form (not committed until "Commit changes").
     html += '<div class="expand-form">';
-
-    // Description
-    html += '<div class="form-field">';
-    html += '<div class="form-label">Description</div>';
-    html += '<input type="text" data-field="desc" data-id="' + escAttr(id) + '" value="' + escAttr(st.desc) + '">';
-    html += '</div>';
-
-    // Date + Amount (read-only)
+    html += '<div class="form-field"><div class="form-label">Description</div>';
+    html += '<input type="text" data-field="desc" data-id="' + escAttr(id) + '" value="' + escAttr(st.desc) + '"></div>';
     html += '<div class="form-row-2">';
     html += '<div class="form-field"><div class="form-label">Date</div>';
     html += '<input type="date" data-field="date" data-id="' + escAttr(id) + '" value="' + escAttr(st.date) + '"></div>';
     html += '<div class="form-field"><div class="form-label">Amount</div>';
-    html += '<input type="text" value="฿' + fmtAmt(tx.amount) + '" readonly></div>';
-    html += '</div>';
-
-    // Category
-    html += '<div class="form-field">';
-    html += '<div class="form-label">Category</div>';
+    html += '<input type="text" value="฿' + fmtAmt(tx.amount) + '" readonly></div></div>';
+    html += '<div class="form-field"><div class="form-label">Category</div>';
     html += '<select data-field="cat" data-id="' + escAttr(id) + '">';
     CATS.forEach(function (c) {
       html += '<option value="' + escAttr(c) + '"' + (c === st.cat ? ' selected' : '') + '>' + escHtml(c) + '</option>';
     });
     html += '</select></div>';
-
-    // Note
-    html += '<div class="form-field">';
-    html += '<div class="form-label">Note</div>';
-    html += '<input type="text" data-field="note" data-id="' + escAttr(id) + '" value="' + escAttr(st.note) + '">';
-    html += '</div>';
-
-    html += '<div class="btn-row">';
-    html += '<button class="btn primary" data-action="confirm-missing" data-id="' + escAttr(id) + '" data-amount="' + tx.amount + '"' + (st.submitting ? ' disabled' : '') + '>';
-    html += st.submitting ? 'Saving…' : 'Confirm';
-    html += '</button>';
-    html += '<button class="btn muted" data-action="cancel-missing" data-id="' + escAttr(id) + '">Cancel</button>';
+    html += '<div class="form-field"><div class="form-label">Note</div>';
+    html += '<input type="text" data-field="note" data-id="' + escAttr(id) + '" value="' + escAttr(st.note) + '"></div>';
+    html += '<div class="row-meta" style="color:#3b6d11;margin-top:8px">✓ Ready to add — saved on “Commit changes”.</div>';
+    html += '<div class="row-actions">';
+    html += '<button class="btn muted" data-action="stage-skip" data-id="' + escAttr(id) + '">Skip this instead</button>';
     html += '</div>';
     html += '</div>'; // expand-form
+  } else {
+    // Undecided — must choose add or skip before committing.
+    html += '<div class="row-actions">';
+    html += '<button class="btn btn-green" data-action="stage-add" data-id="' + escAttr(id) + '">+ Add to DB</button>';
+    html += '<button class="btn muted" data-action="stage-skip" data-id="' + escAttr(id) + '">Skip</button>';
+    html += '</div>';
   }
 
   html += '</div>'; // row-card
@@ -735,17 +739,14 @@ function attachEvents(card) {
     var id = btn.getAttribute('data-id');
     var ref = btn.getAttribute('data-ref');
 
-    if (action === 'expand-missing') {
-      missingState[id].expanded = true;
+    if (action === 'stage-add') {
+      missingState[id].decision = 'add';
       renderContent();
-    } else if (action === 'cancel-missing') {
-      missingState[id].expanded = false;
+    } else if (action === 'stage-skip') {
+      missingState[id].decision = 'skip';
       renderContent();
-    } else if (action === 'skip-missing') {
-      missingState[id].skipped = true;
-      renderContent();
-    } else if (action === 'confirm-missing') {
-      confirmMissing(id, parseFloat(btn.getAttribute('data-amount')));
+    } else if (action === 'commit-missing') {
+      commitMissing();
     } else if (action === 'nos-ok') {
       nosState[ref].doneOk = true;
       renderContent();
@@ -798,31 +799,49 @@ function attachEvents(card) {
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
-async function confirmMissing(id, amount) {
-  var st = missingState[id];
-  if (st.submitting || st.done) return;   // guard against double-tap
-  if (!st.desc.trim()) { toast('Description is required'); return; }
-  if (!st.date)         { toast('Date is required'); return; }
-  st.submitting = true;
-  renderContent();
+// Commit every "Add to DB"-staged missing row for the active card, at once.
+var committing = false;
+async function commitMissing() {
+  if (committing) return;
+  var card = allCards[activeIdx];
+  var missing = card.missing_in_db || [];
+  var jobs = [];
+  missing.forEach(function (tx, idx) {
+    var st = missingState[txId(card, idx)];
+    if (st && st.decision === 'add' && !st.committed) jobs.push({ st: st, tx: tx });
+  });
+  if (!jobs.length) return;
 
-  try {
-    await DataSource.submitEntry({
-      Date:        st.date,
-      Description: st.desc.trim(),
-      Amount:      String(Math.round(amount)),
-      Category:    st.cat,
-      Note:        st.note.trim(),
-    });
-    st.done = true;
-    st.submitting = false;
-    toast('Added to DB');
-    renderContent();
-  } catch (e) {
-    st.submitting = false;
-    toast('Error: ' + e.message);
-    renderContent();
+  // Validate before sending anything.
+  for (var k = 0; k < jobs.length; k++) {
+    if (!jobs[k].st.desc.trim()) { toast('A row is missing a description'); return; }
+    if (!jobs[k].st.date)        { toast('A row is missing a date'); return; }
   }
+
+  committing = true;
+  var btn = document.getElementById('commit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  var ok = 0, fail = 0;
+  for (var i = 0; i < jobs.length; i++) {
+    var j = jobs[i];
+    try {
+      await DataSource.submitEntry({
+        Date:        j.st.date,
+        Description: j.st.desc.trim(),
+        Amount:      String(Math.round(j.tx.amount)),
+        Category:    j.st.cat,
+        Note:        j.st.note.trim(),
+      });
+      j.st.committed = true;
+      ok++;
+    } catch (e) {
+      fail++;
+    }
+  }
+  committing = false;
+  toast(ok + ' added to DB' + (fail ? ', ' + fail + ' failed' : ''));
+  renderContent();
 }
 
 async function confirmLowMatch(id, amount) {
