@@ -113,6 +113,29 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 /* Toast */
 .toast{position:fixed;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);left:50%;transform:translateX(-50%);background:#1a1a18;color:#f5f4f0;font-size:13px;padding:9px 18px;border-radius:999px;z-index:999;opacity:0;transition:opacity .2s;white-space:nowrap;pointer-events:none}
 .toast.show{opacity:1}
+
+/* Lifecycle stepper (upload flow) */
+.stepper{padding:14px 2px 2px}
+.steps{display:flex;align-items:flex-start}
+.step{display:flex;flex-direction:column;align-items:center;flex:1;position:relative}
+.step .dot{width:16px;height:16px;border-radius:50%;background:#e0ddd5;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;z-index:2}
+.step .lbl{font-size:9px;color:#aaa;margin-top:5px;text-align:center;line-height:1.2;max-width:56px}
+.step:not(:last-child)::after{content:"";position:absolute;top:7px;left:50%;width:100%;height:2px;background:#e0ddd5;z-index:1}
+.step.done .dot{background:#3b6d11}
+.step.done:not(:last-child)::after{background:#3b6d11}
+.step.current .dot{background:#3b6d11;box-shadow:0 0 0 3px #eaf3de}
+.step.current .lbl{color:#3b6d11;font-weight:700}
+.step.err .dot{background:#a32d2d}
+.step.err .lbl{color:#a32d2d;font-weight:700}
+.pathchip{display:inline-flex;align-items:center;gap:6px;background:#efeee9;color:#777;border-radius:999px;font-size:11px;padding:5px 11px;margin-top:10px;font-family:ui-monospace,Menlo,monospace}
+.pathchip.green{background:#eaf3de;color:#3b6d11}
+.pathchip.red{background:#fcebeb;color:#a32d2d}
+.flow-actions{margin-top:14px}
+.pending-card{background:#fff;border:0.5px solid #e0e0d8;border-radius:12px;padding:13px 15px;margin-bottom:10px}
+.pending-card.err{border-color:#f7c1c1;background:#fdf6f6}
+.chip-card{margin:0}
+.spin{width:14px;height:14px;border:2px solid #d8e0cf;border-top-color:#3b6d11;border-radius:50%;display:inline-block;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -177,6 +200,22 @@ var snapshotAt = null;
 // Set in boot() from data.upload_errors; used by renderContent() to show notice.
 var uploadErrors = {};
 
+// duplicate_notes from verify.json — keyed by card_last4 (older/stale upload ignored).
+var duplicateNotes = {};
+
+// Statement PDFs already in the pipeline (GitHub mode), for the two-step flow:
+//   pendingFiles  — uploaded, not yet verified (inbox/statements/)
+//   archivedFiles — already verified (inbox/archive/statements/)
+// Both feed duplicate detection; pendingFiles also drives the "awaiting verify" screen.
+var pendingFiles = [];
+var archivedFiles = [];
+
+// last4 -> display name, from cards.json (for labelling the pending screen).
+var cardsMap = {};
+
+// Empty-state card picker selection.
+var selectedCard = null;
+
 // GitHub mode: the phone can't parse PDFs, so it reads a verify.json snapshot
 // the Mac writes on each run (via DataSource.loadVerification). The page still
 // works — it just shows as-of-last-Mac-run data and hides the Archive action
@@ -204,6 +243,29 @@ async function boot() {
     allCards = data.cards || [data];
     snapshotAt = data.generated_at || null;
     uploadErrors = data.upload_errors || {};
+    duplicateNotes = data.duplicate_notes || {};
+
+    // Card display names (for the pending screen label).
+    try {
+      var cl = await DataSource.loadCards();
+      (cl || []).forEach(function (c) { cardsMap[c.last4] = c.name; });
+    } catch (e) { /* ignore — labels fall back to the last-4 */ }
+
+    // What's already in the pipeline (uploaded-not-verified vs archived).
+    try {
+      var ls = await DataSource.listStatements();
+      pendingFiles = (ls && ls.pending) || [];
+      archivedFiles = (ls && ls.archived) || [];
+    } catch (e) { pendingFiles = []; archivedFiles = []; }
+
+    // GitHub two-step flow: an uploaded-but-not-yet-verified PDF takes over the
+    // view (the "awaiting verify" / "couldn't read" screen). On the Mac, GET
+    // /api/verify already parses inbox PDFs live, so they show up as cards —
+    // no separate pending screen there.
+    if (IS_GH && pendingFiles.length > 0) {
+      renderPending();
+      return;
+    }
 
     if (IS_GH && allCards.length === 0) {
       renderEmptyUpload();
@@ -226,6 +288,35 @@ async function boot() {
       '<strong>Error</strong>' + escHtml(e.message);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Lifecycle stepper — Pick PDF → Uploaded → Verify → Processing → Archived.
+// stage: 'pick' | 'verify' | 'processing' | 'archived' | 'error'
+// ---------------------------------------------------------------------------
+function stepperHtml(stage, pathHtml, pathCls) {
+  var order = ['pick', 'uploaded', 'verify', 'processing', 'archived'];
+  var labels = { pick: 'Pick PDF', uploaded: 'Uploaded', verify: 'Verify',
+                 processing: 'Processing', archived: 'Archived' };
+  // Map a stage to "how many steps are complete".
+  var doneTo = { pick: 0, verify: 2, processing: 3, archived: 5, error: 2 }[stage];
+  var curIdx = { pick: 0, verify: 2, processing: 3, archived: 4, error: 3 }[stage];
+  var h = '<div class="stepper"><div class="steps">';
+  order.forEach(function (k, i) {
+    var cls = 'step', inner = '';
+    if (stage === 'error' && i === 3) { cls += ' err'; inner = '!'; }
+    else if (i < doneTo) { cls += ' done'; inner = '✓'; }
+    else if (i === curIdx) { cls += ' current'; if (stage === 'archived') inner = '✓'; }
+    var lbl = (stage === 'error' && i === 3) ? 'Couldn’t read' : labels[k];
+    h += '<div class="' + cls + '"><div class="dot">' + inner + '</div>' +
+         '<div class="lbl">' + lbl + '</div></div>';
+  });
+  h += '</div>';
+  if (pathHtml) h += '<span class="pathchip' + (pathCls ? ' ' + pathCls : '') + '">' + pathHtml + '</span>';
+  h += '</div>';
+  return h;
+}
+
+function cardName(last4) { return cardsMap[last4] || 'Card'; }
 
 // ---------------------------------------------------------------------------
 // Tabs
@@ -274,21 +365,28 @@ function renderContent() {
 
   var html = '';
 
-  // GitHub mode: this is a snapshot from the last Mac run, not live. Make that
-  // clear and note that buckets won't recompute on the phone after edits.
+  // GitHub mode: this card is verified + archived. Show the lifecycle stepper
+  // (final stage) and a freshness note. verify.json is written by the verify
+  // Action (or a Mac run) — no Mac is required.
   if (IS_GH) {
+    html += stepperHtml('archived', '📦 budget-data/inbox/archive/statements/', 'green');
     var asOf = snapshotAt ? fmtSnapshot(snapshotAt) : 'unknown';
-    html += '<div class="state-msg" style="margin-bottom:12px;font-size:13px">' +
-      'Snapshot from your Mac · as of ' + escHtml(asOf) +
-      '<br><span style="color:#888">Adds &amp; deletes save to your database, but the ' +
-      'match list refreshes only on the next Mac run.</span></div>';
+    html += '<div class="state-msg" style="margin:10px 0 12px;font-size:12px;color:#888">' +
+      'Verified · as of ' + escHtml(asOf) + '. Adds &amp; deletes save to your database; ' +
+      'buckets refresh on the next verify.</div>';
   }
 
-  // Upload error notice — shown in both modes when the last upload couldn't be read.
+  // Duplicate note — a stale/older statement upload for this card was ignored.
+  if (duplicateNotes[card.card_last4]) {
+    html += '<div style="margin:8px 0;padding:9px 12px;background:#faeeda;color:#854f0b;' +
+            'border-radius:8px;font-size:13px">' + escHtml(duplicateNotes[card.card_last4]) + '</div>';
+  }
+
+  // Upload error notice — when verify.json still flags a failed read for this card.
   if (uploadErrors[card.card_last4]) {
-    html += '<div class="error" style="margin-top:8px;padding:9px 12px;background:#fcebeb;' +
+    html += '<div style="margin:8px 0;padding:9px 12px;background:#fcebeb;' +
             'color:#a32d2d;border-radius:8px;font-size:13px">' +
-            'Couldn\'t read this PDF — check the password and re-upload.</div>';
+            'Couldn\'t read the last PDF for this card — re-upload and verify with the password.</div>';
   }
 
   // Summary bar
@@ -356,16 +454,13 @@ function renderContent() {
     html += '</div>';
   }
 
-  // Upload statement — available in both Mac and GitHub (phone) modes.
-  // Phone uploads to budget-data inbox/statements/; Mac saves to 01_inbox/statements/.
-  html += '<div class="upload-row" style="margin-top:8px">';
+  // Upload a NEW statement for this card (next month). Step 1 of the two-step
+  // flow — just stores the PDF; the password + Verify happen on the next screen.
+  html += '<div class="upload-row" style="margin-top:18px">';
   html += '<input type="file" accept="application/pdf" data-action="stmt-file"' +
           ' data-card="' + escAttr(card.card_last4) + '" style="display:none">';
-  html += '<input type="text" class="stmt-pw" data-card="' + escAttr(card.card_last4) + '"' +
-          ' placeholder="PDF password (leave blank if none)"' +
-          ' style="width:100%;margin-bottom:6px;font-size:13px;padding:7px 10px;border:0.5px solid #ccc;border-radius:8px">';
   html += '<button class="btn" style="width:100%;text-align:center"' +
-          ' data-action="upload-statement" data-card="' + escAttr(card.card_last4) + '">Upload statement</button>';
+          ' data-action="upload-statement" data-card="' + escAttr(card.card_last4) + '">Upload a new statement</button>';
   html += '</div>';
 
   document.getElementById('content').innerHTML = html;
@@ -665,9 +760,8 @@ function attachEvents(card) {
       archiveStatement(card);
     } else if (action === 'upload-statement') {
       var cardKey = btn.getAttribute('data-card');
-      var pwInput = document.querySelector('.stmt-pw[data-card="' + cardKey + '"]');
       var fileInput = document.querySelector('[data-action="stmt-file"][data-card="' + cardKey + '"]');
-      fileInput.onchange = function () { handleStatementUpload(cardKey, fileInput, pwInput); };
+      fileInput.onchange = function () { handleStatementUpload(cardKey, fileInput); };
       fileInput.click();
       return;
     }
@@ -772,27 +866,23 @@ async function archiveStatement(card) {
   }
 }
 
-// Empty-state upload (no statements yet): a button → pick a card → file + password.
-// Self-contained with direct listeners (the #content click delegation only attaches
-// once a card panel is rendered, which never happens in the empty state).
+// ---------------------------------------------------------------------------
+// Empty state (screen 1) — card-first: pick the card, then the PDF. No password
+// here (that's on the Verify screen, after upload).
+// ---------------------------------------------------------------------------
 function renderEmptyUpload() {
-  var content = document.getElementById('content');
-  content.innerHTML =
-    '<div class="state-msg">' +
-      '<strong>No statements yet</strong>' +
-      'Upload your first statement to verify it against your database. ' +
-      'It processes on the server in ~1 minute, then reload here.' +
-    '</div>' +
-    '<div style="padding:0 14px">' +
-      '<button class="btn primary" id="empty-upload-btn" style="width:100%;text-align:center">Upload statement</button>' +
-    '</div>' +
-    '<div id="empty-upload-area" style="padding:12px 14px"></div>';
-  document.getElementById('empty-upload-btn').addEventListener('click', showEmptyCardPicker);
+  selectedCard = null;
+  var html = stepperHtml('pick', '📱 on your device');
+  html += '<div class="state-msg" style="padding:16px 4px 8px">' +
+          '<strong>Verify a statement</strong>' +
+          'Pick the card, then choose the PDF. It’s read on the server right after.</div>';
+  html += '<div id="empty-card-area" style="padding:0 2px"><p class="empty-note">Loading cards…</p></div>';
+  document.getElementById('content').innerHTML = html;
+  renderEmptyCards();
 }
 
-async function showEmptyCardPicker() {
-  var area = document.getElementById('empty-upload-area');
-  area.innerHTML = '<p class="empty-note">Loading cards…</p>';
+async function renderEmptyCards() {
+  var area = document.getElementById('empty-card-area');
   var cards;
   try {
     cards = await DataSource.loadCards();   // [{last4, name}, ...]
@@ -801,62 +891,186 @@ async function showEmptyCardPicker() {
     return;
   }
   if (!cards || !cards.length) {
-    area.innerHTML = '<p class="empty-note">No cards configured.</p>';
+    area.innerHTML = '<p class="empty-note">No cards saved yet — add a card on the entry form first.</p>';
     return;
   }
   var html = '<p class="empty-note">Which card is this statement for?</p>';
-  html += '<input type="text" id="empty-stmt-pw" placeholder="PDF password (leave blank if none)" ' +
-          'style="width:100%;margin-bottom:8px;font-size:13px;padding:7px 10px;border:0.5px solid #ccc;border-radius:8px">';
-  html += '<input type="file" accept="application/pdf" id="empty-stmt-file" style="display:none">';
   html += '<div class="btn-row" style="flex-wrap:wrap;gap:8px">';
   cards.forEach(function (c) {
-    html += '<button class="btn" data-empty-card="' + escAttr(c.last4) + '">' +
+    html += '<button class="btn chip-card" data-card="' + escAttr(c.last4) + '">' +
             escHtml(c.name) + ' ·' + escHtml(c.last4) + '</button>';
   });
   html += '</div>';
+  html += '<input type="file" accept="application/pdf" id="empty-stmt-file" style="display:none">';
+  html += '<div class="flow-actions"><button class="btn primary" id="empty-upload-btn" ' +
+          'style="width:100%;text-align:center" disabled>Upload statement</button></div>';
+  html += '<p class="empty-note" style="margin-top:8px">Card list comes from your saved cards — ' +
+          'add one on the entry form and it appears here automatically.</p>';
   area.innerHTML = html;
+
   var fileInput = document.getElementById('empty-stmt-file');
-  var pwInput = document.getElementById('empty-stmt-pw');
-  area.querySelectorAll('[data-empty-card]').forEach(function (b) {
+  var uploadBtn = document.getElementById('empty-upload-btn');
+  area.querySelectorAll('.chip-card').forEach(function (b) {
     b.addEventListener('click', function () {
-      var last4 = b.getAttribute('data-empty-card');
-      fileInput.onchange = function () { handleStatementUpload(last4, fileInput, pwInput); };
-      fileInput.click();
+      selectedCard = b.getAttribute('data-card');
+      area.querySelectorAll('.chip-card').forEach(function (x) { x.classList.remove('primary'); });
+      b.classList.add('primary');
+      uploadBtn.disabled = false;
     });
+  });
+  uploadBtn.addEventListener('click', function () {
+    if (!selectedCard) return;
+    fileInput.onchange = function () { handleStatementUpload(selectedCard, fileInput); };
+    fileInput.click();
   });
 }
 
-async function handleStatementUpload(cardLast4, fileInput, pwInput) {
+// ---------------------------------------------------------------------------
+// Pending state (screen 3 / 6) — uploaded, awaiting Verify. Shows the error
+// variant when verify.json flags a failed read for a pending card.
+// ---------------------------------------------------------------------------
+function renderPending() {
+  var byCard = {};
+  pendingFiles.forEach(function (n) {
+    var l4 = String(n).split('_')[0];
+    (byCard[l4] = byCard[l4] || []).push(n);
+  });
+  var hasError = Object.keys(byCard).some(function (l4) { return uploadErrors[l4]; });
+
+  var html = stepperHtml(hasError ? 'error' : 'verify',
+    (hasError ? '📥 stays in ' : '📥 ') + 'budget-data/inbox/statements/',
+    hasError ? 'red' : '');
+
+  if (hasError) {
+    html += '<div class="state-msg" style="padding:16px 4px 8px">' +
+            '<strong>Couldn’t read this PDF</strong>' +
+            'It looks password-protected. Enter the password and verify again — your ' +
+            'file is still in the inbox, nothing was lost.</div>';
+  } else {
+    html += '<div class="state-msg" style="padding:16px 4px 8px">' +
+            '<strong>Statement uploaded</strong>' +
+            'Add the password if it’s protected, then verify. Processing starts right away.</div>';
+  }
+
+  Object.keys(byCard).forEach(function (l4) {
+    byCard[l4].forEach(function (n) {
+      var err = !!uploadErrors[l4];
+      html += '<div class="pending-card' + (err ? ' err' : '') + '">' +
+        '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">' +
+        '<div style="font-weight:500">' + escHtml(cardName(l4)) + ' ·' + escHtml(l4) + '</div>' +
+        '<button class="btn muted" data-action="remove-pending" data-file="' + escAttr(n) + '" ' +
+        'style="padding:4px 10px;flex-shrink:0">Remove</button></div>' +
+        '<div style="font-size:11px;color:#888;margin-top:3px;word-break:break-all">' + escHtml(n) + '</div>' +
+        '</div>';
+    });
+  });
+
+  html += '<input type="text" id="verify-pw" placeholder="PDF password (leave blank if none)" ' +
+          'style="width:100%;margin:8px 0;font-size:13px;padding:9px 11px;border:0.5px solid #ccc;border-radius:8px">';
+  html += '<div class="flow-actions"><button class="btn primary" id="verify-btn" ' +
+          'style="width:100%;text-align:center">' + (hasError ? 'Verify again' : 'Verify now') + '</button></div>';
+  html += '<p class="empty-note" style="margin-top:10px">The password is used once to open the PDF and never stored.</p>';
+
+  var content = document.getElementById('content');
+  content.innerHTML = html;
+  document.getElementById('verify-btn').addEventListener('click', doVerify);
+  content.querySelectorAll('[data-action="remove-pending"]').forEach(function (b) {
+    b.addEventListener('click', function () { removePending(b.getAttribute('data-file')); });
+  });
+}
+
+async function doVerify() {
+  var pwEl = document.getElementById('verify-pw');
+  var pw = (pwEl && pwEl.value) || '';
+  var btn = document.getElementById('verify-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  try {
+    var res = await DataSource.verifyStatement(pw);
+    if (pwEl) pwEl.value = '';                 // never keep the password
+    renderProcessing(res && res.note);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Verify now'; }
+    alert('Couldn’t start verify: ' + (e.message || e));
+  }
+}
+
+function renderProcessing(note) {
+  var html = stepperHtml('processing', '⚙︎ reading on the server');
+  html += '<div class="state-msg" style="padding:24px 8px">' +
+          '<strong><span class="spin"></span>Processing…</strong>' +
+          'Reading the statement and matching your transactions. About a minute — then reload.' +
+          (note ? '<br><span style="color:#888;font-size:12px">' + escHtml(note) + '</span>' : '') +
+          '</div>';
+  html += '<div class="flow-actions"><button class="btn primary" id="reload-btn" ' +
+          'style="width:100%;text-align:center">Reload</button></div>';
+  document.getElementById('content').innerHTML = html;
+  document.getElementById('reload-btn').addEventListener('click', function () { location.reload(); });
+}
+
+var removing = false;
+async function removePending(filename) {
+  if (removing) return;
+  if (!confirm('Remove this uploaded statement? It will be deleted from the inbox.')) return;
+  removing = true;
+  try {
+    await DataSource.removeStatement(filename);
+    toast('Upload removed');
+    location.reload();
+  } catch (e) {
+    removing = false;
+    alert('Couldn’t remove: ' + (e.message || e));
+  }
+}
+
+// Step 1 of the two-step flow: hash → duplicate check → store the PDF (no parse
+// yet) → reload into the Verify screen. No password is read here.
+async function handleStatementUpload(cardLast4, fileInput) {
   var file = fileInput.files && fileInput.files[0];
   if (!file) return;
-  var pw = (pwInput && pwInput.value) || '';
   try {
-    var base64 = await fileToBase64(file);  // strips the data: prefix
-    var res = await DataSource.uploadStatement(cardLast4, base64, pw);
-    if (pwInput) pwInput.value = '';        // never keep the password
-    fileInput.value = '';
-    if (IS_GH) {
-      alert('Uploaded — processing on the server. ' +
-            (res && res.note ? res.note : 'Check back in ~1 minute and reload.'));
-    } else {
-      location.reload();                    // Mac: live re-parse on reload
+    var parts = await readFileParts(file);     // { base64, hash16 }
+    // Duplicate guard (same file): a re-upload of identical bytes for this card.
+    var key = cardLast4 + '_' + parts.hash16;
+    var dup = pendingFiles.concat(archivedFiles).some(function (n) { return String(n).indexOf(key) !== -1; });
+    if (dup && !confirm('This exact statement looks already uploaded or verified. Upload it again anyway?')) {
+      fileInput.value = '';
+      return;
     }
+    await DataSource.uploadStatement(cardLast4, parts.base64, parts.hash16);
+    fileInput.value = '';
+    location.reload();   // GitHub → Verify screen; Mac → live-parsed result
   } catch (e) {
-    if (pwInput) pwInput.value = '';
+    fileInput.value = '';
     alert('Upload failed: ' + (e.message || e));
   }
 }
 
-function fileToBase64(file) {
+// Read a File into { base64, hash16 } — base64 for upload, the first 16 hex of
+// its sha-256 for duplicate detection (filename embeds it).
+function readFileParts(file) {
   return new Promise(function (resolve, reject) {
     var r = new FileReader();
     r.onload = function () {
-      var s = String(r.result);
-      var comma = s.indexOf(',');
-      resolve(comma >= 0 ? s.slice(comma + 1) : s);  // drop "data:...;base64,"
+      try {
+        var buf = r.result;                    // ArrayBuffer
+        var bytes = new Uint8Array(buf);
+        var bin = '';
+        for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        var base64 = btoa(bin);
+        if (window.crypto && window.crypto.subtle) {
+          window.crypto.subtle.digest('SHA-256', buf).then(function (hb) {
+            var hex = Array.prototype.map.call(new Uint8Array(hb), function (b) {
+              return ('0' + b.toString(16)).slice(-2);
+            }).join('');
+            resolve({ base64: base64, hash16: hex.slice(0, 16) });
+          }).catch(function () { resolve({ base64: base64, hash16: 'nohash' }); });
+        } else {
+          resolve({ base64: base64, hash16: 'nohash' });
+        }
+      } catch (err) { reject(err); }
     };
     r.onerror = reject;
-    r.readAsDataURL(file);
+    r.readAsArrayBuffer(file);
   });
 }
 

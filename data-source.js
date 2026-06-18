@@ -1282,33 +1282,41 @@
     throw new Error('Dispatch failed: ' + res2.status + ' ' + (d.message || ''));
   }
 
-  // uploadStatement — upload a credit-card statement PDF.
-  //   local  → POST /api/verify/upload (saves into 01_inbox/statements/; the
-  //            live GET /api/verify re-parses it, Keychain supplies any password).
-  //   github → ghPutRaw the PDF into budget-data inbox/statements/, then
-  //            workflow_dispatch verify-inbox.yml with the typed password as a
-  //            one-shot input (omitted-as-'' when blank). The password is never
-  //            stored — it rides the dispatch and is discarded.
-  // `base64` is the PDF bytes, base64-encoded (no data: prefix).
-  async function uploadStatement(card, base64, password) {
+  // uploadStatement — step 1 of the two-step flow: STORE the PDF only (no
+  // parsing yet). The user then reviews and taps Verify (verifyStatement).
+  //   local  → POST /api/verify/upload (saves into 01_inbox/statements/).
+  //   github → ghPutRaw into budget-data inbox/statements/. The filename embeds
+  //            a content hash so a re-upload of the same bytes is detectable
+  //            (listStatements) and lands on the same path (idempotent).
+  // `base64` is the PDF bytes (no data: prefix); `hash16` = first 16 hex of sha-256.
+  async function uploadStatement(card, base64, hash16) {
     if (MODE === 'local') {
       var res = await fetch('/api/verify/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ card: card, content_b64: base64 }),
+        body: JSON.stringify({ card: card, content_b64: base64, hash16: hash16 }),
       });
       var data = await res.json().catch(function () { return {}; });
       if (!res.ok) throw new Error(data.error || 'POST /api/verify/upload: ' + res.status);
       return data;
     }
     var stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-    await ghPutRaw('inbox/statements/' + card + '_' + stamp + '.pdf', base64,
-                   'upload statement from phone');
-    // Fire the verify Action now (best-effort — the hourly cron is the fallback).
+    var name = 'inbox/statements/' + card + '_' + (hash16 || 'nohash') + '_' + stamp + '.pdf';
+    await ghPutRaw(name, base64, 'upload statement from phone');
+    return { status: 'uploaded', filename: name };
+  }
+
+  // verifyStatement — step 2: parse whatever is now in inbox/statements/. The
+  // typed password rides a one-shot workflow_dispatch input and is never stored.
+  //   local  → no-op success; the page reload re-parses live (Keychain password).
+  //   github → workflow_dispatch verify-inbox.yml (best-effort; the hourly cron
+  //            is the fallback for unencrypted PDFs).
+  async function verifyStatement(password) {
+    if (MODE === 'local') return { status: 'ok' };
     var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + CODE_REPO_NAME +
               '/actions/workflows/' + VERIFY_WORKFLOW_FILE + '/dispatches';
     try {
-      var res2 = await ghFetch(url, {
+      var res = await ghFetch(url, {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer ' + getActionsToken(),
@@ -1318,15 +1326,64 @@
         },
         body: JSON.stringify({ ref: BRANCH, inputs: { password: password || '' } }),
       });
-      if (res2.status === 204) return { status: 'dispatched' };
-      if (res2.status === 401 || res2.status === 403) {
+      if (res.status === 204) return { status: 'dispatched' };
+      if (res.status === 401 || res.status === 403) {
         resetActionsToken();
-        return { status: 'uploaded', note: 'Action token rejected — will run on the hourly sweep (unencrypted only).' };
+        return { status: 'queued', note: 'Action token rejected — re-enter it. Meanwhile the hourly sweep runs unencrypted PDFs only.' };
       }
-      return { status: 'uploaded', note: 'Dispatch failed (' + res2.status + ') — hourly sweep will retry.' };
+      return { status: 'queued', note: 'Verify dispatch failed (' + res.status + ') — hourly sweep will retry (unencrypted only).' };
     } catch (e) {
-      return { status: 'uploaded', note: 'Uploaded; dispatch unavailable — hourly sweep will retry.' };
+      return { status: 'queued', note: 'Verify dispatch unavailable — hourly sweep will retry (unencrypted only).' };
     }
+  }
+
+  // listStatements — filenames already in the pipeline, for duplicate detection
+  // and the pending (awaiting-verify) state.
+  //   { pending: [names in inbox/statements/], archived: [names in inbox/archive/statements/] }
+  //   local  → GET /api/verify/statements; github → GitHub contents listing.
+  async function listStatements() {
+    if (MODE === 'local') {
+      var res = await fetch('/api/verify/statements');
+      if (!res.ok) return { pending: [], archived: [] };
+      return res.json().catch(function () { return { pending: [], archived: [] }; });
+    }
+    async function dirNames(path) {
+      var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
+                '/contents/' + encodeURIComponent(path) +
+                '?ref=' + encodeURIComponent(BRANCH) + '&_t=' + Date.now();
+      var res = await ghFetch(url, { headers: ghHeaders(), cache: 'no-store' });
+      if (!res.ok) return [];           // 404 = dir doesn't exist yet
+      var arr = await res.json().catch(function () { return []; });
+      if (!Array.isArray(arr)) return [];
+      return arr.filter(function (e) { return e.type === 'file'; })
+                .map(function (e) { return e.name; });
+    }
+    var pending = await dirNames('inbox/statements');
+    var archived = await dirNames('inbox/archive/statements');
+    return { pending: pending, archived: archived };
+  }
+
+  // removeStatement — delete an uploaded-but-not-yet-verified PDF (undo an
+  // accidental upload). `filename` is a basename under inbox/statements/.
+  //   local  → POST /api/verify/remove; github → contents GET (for sha) + DELETE.
+  async function removeStatement(filename) {
+    if (MODE === 'local') {
+      var res = await fetch('/api/verify/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: filename }),
+      });
+      if (!res.ok) throw new Error('POST /api/verify/remove: ' + res.status);
+      return res.json().catch(function () { return {}; });
+    }
+    var path = 'inbox/statements/' + filename;
+    var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
+              '/contents/' + encodeURIComponent(path) +
+              '?ref=' + encodeURIComponent(BRANCH) + '&_t=' + Date.now();
+    var getRes = await ghFetch(url, { headers: ghHeaders(), cache: 'no-store' });
+    if (!getRes.ok) throw new Error('statement not found (' + getRes.status + ')');
+    var meta = await getRes.json();
+    return ghDelete(path, meta.sha, 'remove uploaded statement from phone');
   }
 
   // loadScanStatus — Mac-only (background OCR worker). Exported only in local
@@ -1376,6 +1433,9 @@
     submitReview:        submitReview,
     triggerOcr:          triggerOcr,
     uploadStatement:     uploadStatement,
+    verifyStatement:     verifyStatement,
+    listStatements:      listStatements,
+    removeStatement:     removeStatement,
 
     resetToken:          resetToken,
     resetActionsToken:   resetActionsToken,
