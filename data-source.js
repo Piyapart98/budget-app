@@ -41,6 +41,7 @@
   // PAT stays Contents-only (least privilege).
   var CODE_REPO_NAME = 'budget-code';
   var OCR_WORKFLOW_FILE = 'ocr-inbox.yml';
+  var VERIFY_WORKFLOW_FILE = 'verify-inbox.yml';
 
   var TOKEN_KEY = 'budget_github_token_v1';
   var ACTIONS_TOKEN_KEY = 'budget_github_actions_token_v1';
@@ -1281,6 +1282,53 @@
     throw new Error('Dispatch failed: ' + res2.status + ' ' + (d.message || ''));
   }
 
+  // uploadStatement — upload a credit-card statement PDF.
+  //   local  → POST /api/verify/upload (saves into 01_inbox/statements/; the
+  //            live GET /api/verify re-parses it, Keychain supplies any password).
+  //   github → ghPutRaw the PDF into budget-data inbox/statements/, then
+  //            workflow_dispatch verify-inbox.yml with the typed password as a
+  //            one-shot input (omitted-as-'' when blank). The password is never
+  //            stored — it rides the dispatch and is discarded.
+  // `base64` is the PDF bytes, base64-encoded (no data: prefix).
+  async function uploadStatement(card, base64, password) {
+    if (MODE === 'local') {
+      var res = await fetch('/api/verify/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card: card, content_b64: base64 }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'POST /api/verify/upload: ' + res.status);
+      return data;
+    }
+    var stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+    await ghPutRaw('inbox/statements/' + card + '_' + stamp + '.pdf', base64,
+                   'upload statement from phone');
+    // Fire the verify Action now (best-effort — the hourly cron is the fallback).
+    var url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + CODE_REPO_NAME +
+              '/actions/workflows/' + VERIFY_WORKFLOW_FILE + '/dispatches';
+    try {
+      var res2 = await ghFetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + getActionsToken(),
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: BRANCH, inputs: { password: password || '' } }),
+      });
+      if (res2.status === 204) return { status: 'dispatched' };
+      if (res2.status === 401 || res2.status === 403) {
+        resetActionsToken();
+        return { status: 'uploaded', note: 'Action token rejected — will run on the hourly sweep (unencrypted only).' };
+      }
+      return { status: 'uploaded', note: 'Dispatch failed (' + res2.status + ') — hourly sweep will retry.' };
+    } catch (e) {
+      return { status: 'uploaded', note: 'Uploaded; dispatch unavailable — hourly sweep will retry.' };
+    }
+  }
+
   // loadScanStatus — Mac-only (background OCR worker). Exported only in local
   // mode so review.html's `typeof DataSource.loadScanStatus === 'function'`
   // guard skips polling on the phone (drafts refresh hourly via the Action).
@@ -1327,6 +1375,7 @@
     loadSlipImage:       loadSlipImage,
     submitReview:        submitReview,
     triggerOcr:          triggerOcr,
+    uploadStatement:     uploadStatement,
 
     resetToken:          resetToken,
     resetActionsToken:   resetActionsToken,
