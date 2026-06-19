@@ -1417,6 +1417,35 @@
     } catch (e) { return null; }
   }
 
+  // finalizeVerifiedCard — end of the verify workflow for a card: file the
+  // statement to the archive and clear it from the active view.
+  //   local  → POST /api/verify/archive (moves the local PDF to 02_archive/).
+  //   github → the PDF is already in inbox/archive/statements/ (the verify
+  //            Action moved it on success); just drop this card from verify.json
+  //            so the page returns to the upload (Pick PDF) state.
+  async function finalizeVerifiedCard(last4) {
+    if (MODE === 'local') {
+      var res = await fetch('/api/verify/archive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card: last4 }),
+      });
+      var d = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(d.error || 'POST /api/verify/archive: ' + res.status);
+      return d;
+    }
+    var got = await ghGet('verify.json');
+    var snap = { generated_at: null, cards: [] };
+    if (got.content) { try { snap = JSON.parse(got.content); } catch (e) { /* keep default */ } }
+    snap.cards = (snap.cards || []).filter(function (c) { return c.card_last4 !== last4; });
+    if (snap.upload_errors) delete snap.upload_errors[last4];
+    if (snap.duplicate_notes) delete snap.duplicate_notes[last4];
+    snap.generated_at = new Date().toISOString();
+    await ghPut('verify.json', JSON.stringify(snap, null, 2), got.sha,
+                'archive verified statement from phone');
+    return { status: 'archived' };
+  }
+
   // loadScanStatus — Mac-only (background OCR worker). Exported only in local
   // mode so review.html's `typeof DataSource.loadScanStatus === 'function'`
   // guard skips polling on the phone (drafts refresh hourly via the Action).
@@ -1468,6 +1497,7 @@
     listStatements:      listStatements,
     removeStatement:     removeStatement,
     latestVerifyRun:     latestVerifyRun,
+    finalizeVerifiedCard: finalizeVerifiedCard,
 
     resetToken:          resetToken,
     resetActionsToken:   resetActionsToken,

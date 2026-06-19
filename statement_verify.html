@@ -418,26 +418,9 @@ function renderContent() {
   if (missing.length === 0) {
     html += '<p class="empty-note">All statement charges are in your database.</p>';
   } else {
-    var undecided = 0, toAdd = 0;
     missing.forEach(function (tx, idx) {
       html += renderMissingCard(card, tx, idx);
-      var ms = missingState[txId(card, idx)];
-      if (ms && !ms.committed) {
-        if (ms.decision === 'add') toAdd++;
-        else if (ms.decision !== 'skip') undecided++;
-      }
     });
-    // Commit bar — adds every "Add to DB"-staged row at once. Disabled until
-    // every row is decided (add or skip).
-    if (undecided > 0) {
-      html += '<button class="btn" id="commit-btn" disabled ' +
-              'style="width:100%;text-align:center;margin-top:6px">' +
-              'Decide every row first (' + undecided + ' left)</button>';
-    } else if (toAdd > 0) {
-      html += '<button class="btn btn-green" id="commit-btn" data-action="commit-missing" ' +
-              'style="width:100%;text-align:center;margin-top:6px">' +
-              'Commit changes (' + toAdd + ' to add)</button>';
-    }
   }
 
   // Not on statement
@@ -469,15 +452,29 @@ function renderContent() {
     );
   }
 
-  // Archive footer — end-of-workflow action. Moves the PDF out of the inbox
-  // so next month's run only sees the new statement. Mac-only: archiving moves
-  // a local PDF, which the phone (GitHub mode) can't do — hide it there.
-  if (!IS_GH) {
-    html += '<div style="margin-top:18px">';
-    html += '<button class="btn" style="width:100%;text-align:center" data-action="archive-statement">' +
-      'Archive statement — move out of inbox</button>';
-    html += '</div>';
+  // Commit — the single end-of-workflow action: save every staged "Add to DB"
+  // row, archive the statement, and return to the Pick-PDF start. Disabled until
+  // every unmatched row is decided (add or skip).
+  var undecided = 0, toAdd = 0;
+  (card.missing_in_db || []).forEach(function (tx, idx) {
+    var ms = missingState[txId(card, idx)];
+    if (ms && !ms.committed) {
+      if (ms.decision === 'add') toAdd++;
+      else if (ms.decision !== 'skip') undecided++;
+    }
+  });
+  html += '<div style="margin-top:20px">';
+  if (undecided > 0) {
+    html += '<button class="btn" id="commit-btn" disabled style="width:100%;text-align:center">' +
+            'Decide every row first (' + undecided + ' left)</button>';
+  } else {
+    html += '<button class="btn btn-green" id="commit-btn" data-action="commit-statement" ' +
+            'style="width:100%;text-align:center">Commit' +
+            (toAdd > 0 ? ' (' + toAdd + ' to add)' : '') + '</button>';
   }
+  html += '<p class="empty-note" style="margin-top:6px">Saves staged rows, files the ' +
+          'statement to the archive, and returns to the start.</p>';
+  html += '</div>';
 
   // Upload a NEW statement for this card (next month). Step 1 of the two-step
   // flow — just stores the PDF; the password + Verify happen on the next screen.
@@ -745,8 +742,8 @@ function attachEvents(card) {
     } else if (action === 'stage-skip') {
       missingState[id].decision = 'skip';
       renderContent();
-    } else if (action === 'commit-missing') {
-      commitMissing();
+    } else if (action === 'commit-statement') {
+      commitStatement();
     } else if (action === 'nos-ok') {
       nosState[ref].doneOk = true;
       renderContent();
@@ -799,20 +796,24 @@ function attachEvents(card) {
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
-// Commit every "Add to DB"-staged missing row for the active card, at once.
+// Commit: save every "Add to DB"-staged row, then archive the statement and
+// return to the Pick-PDF start. Won't archive if any row failed to save.
 var committing = false;
-async function commitMissing() {
+async function commitStatement() {
   if (committing) return;
   var card = allCards[activeIdx];
   var missing = card.missing_in_db || [];
-  var jobs = [];
+
+  var jobs = [], undecided = 0;
   missing.forEach(function (tx, idx) {
     var st = missingState[txId(card, idx)];
-    if (st && st.decision === 'add' && !st.committed) jobs.push({ st: st, tx: tx });
+    if (!st || st.committed) return;
+    if (st.decision === 'add') jobs.push({ st: st, tx: tx });
+    else if (st.decision !== 'skip') undecided++;
   });
-  if (!jobs.length) return;
+  if (undecided > 0) { toast('Decide every row first'); return; }
 
-  // Validate before sending anything.
+  // Validate staged rows before sending anything.
   for (var k = 0; k < jobs.length; k++) {
     if (!jobs[k].st.desc.trim()) { toast('A row is missing a description'); return; }
     if (!jobs[k].st.date)        { toast('A row is missing a date'); return; }
@@ -822,7 +823,7 @@ async function commitMissing() {
   var btn = document.getElementById('commit-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
-  var ok = 0, fail = 0;
+  var fail = 0;
   for (var i = 0; i < jobs.length; i++) {
     var j = jobs[i];
     try {
@@ -834,14 +835,30 @@ async function commitMissing() {
         Note:        j.st.note.trim(),
       });
       j.st.committed = true;
-      ok++;
     } catch (e) {
       fail++;
     }
   }
+  if (fail > 0) {                 // keep the statement open so the user can retry
+    committing = false;
+    toast(fail + ' row(s) failed — not archived');
+    renderContent();
+    return;
+  }
+
+  // Everything saved — archive the statement and reset to the start.
+  if (btn) btn.textContent = 'Archiving…';
+  try {
+    await DataSource.finalizeVerifiedCard(card.card_last4);
+  } catch (e) {
+    committing = false;
+    toast('Saved, but archiving failed: ' + (e.message || e));
+    renderContent();
+    return;
+  }
   committing = false;
-  toast(ok + ' added to DB' + (fail ? ', ' + fail + ' failed' : ''));
-  renderContent();
+  toast('Committed & archived');
+  location.reload();              // → Pick PDF (when nothing else is pending)
 }
 
 async function confirmLowMatch(id, amount) {
