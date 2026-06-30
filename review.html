@@ -49,6 +49,7 @@
   .cat-head .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);}
   .cat-now{display:inline-flex;align-items:center;gap:7px;background:var(--green);color:#fff;
     border-radius:999px;padding:7px 14px;font-size:14px;font-weight:600;margin-top:7px;}
+  .cat-now.none{background:#f1efe8;color:var(--text-soft);}
   .cat-change{background:none;border:none;color:var(--green);font-size:13px;font-weight:600;
     cursor:pointer;font-family:var(--sans);padding:4px;}
 
@@ -103,12 +104,6 @@
   .lightbox.open{display:flex;}
   .lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;}
 
-  /* Card select row (payment card; None default, auto-selected) */
-  .card-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;}
-  .card-row .lbl{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);}
-  .card-select{font-family:var(--sans);font-size:13px;color:var(--text);background:var(--bg);
-    border:1px solid var(--border);border-radius:10px;padding:7px 10px;min-width:150px;}
-
   /* possible-duplicate heads-up (is_duplicate from loadDrafts) */
   .dup-badge{display:inline-flex;align-items:center;gap:4px;margin:0 0 8px;
     padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;
@@ -131,7 +126,7 @@
 <!-- category bottom sheet (Option A) -->
 <div class="sheet-bd" id="sheet-bd"></div>
 <div class="sheet" id="sheet">
-  <h3>Choose a category</h3>
+  <h3 id="sheet-title">Choose a category</h3>
   <div id="sheet-grid"></div>
 </div>
 
@@ -225,33 +220,45 @@
     wireSwipe();
   }
 
-  // ---- Card (select; None default, auto-selected from the detected card) ----
+  // ---- Card (pill + bottom-sheet of chips, mirroring Category; None default) ----
   function cardHtml(s) {
-    var opts = '<option value="">None</option>' +
+    var has = !!(s.card && s.card.length);
+    return '<div class="cat-head"><span class="lbl">Card</span>' +
+      '<button class="cat-change" id="card-change">Change ▾</button></div>' +
+      '<div><span class="cat-now' + (has ? '' : ' none') + '">' +
+      Mock.escapeHtml(has ? s.card : 'None') + '</span></div>';
+  }
+  function cardChips(s) {
+    var chips = '<span class="cchip' + (!s.card ? ' on' : '') + '" data-card="">None</span>' +
       cardOptions.map(function (c) {
-        return '<option value="' + Mock.escapeHtml(c.name) + '"' +
-          (c.name === s.card ? ' selected' : '') + '>' + Mock.escapeHtml(c.name) + '</option>';
+        return '<span class="cchip' + (c.name === s.card ? ' on' : '') + '" data-card="' +
+          Mock.escapeHtml(c.name) + '">' + Mock.escapeHtml(c.name) + '</span>';
       }).join('') +
-      '<option value="__add__">➕ Add card…</option>';
-    return '<div class="card-row"><span class="lbl">Card</span>' +
-      '<select class="card-select" id="card-select">' + opts + '</select></div>';
+      '<span class="cchip" data-card="__add__">➕ Add card</span>';
+    return '<div class="cat-grid">' + chips + '</div>';
   }
   function wireCard(s) {
-    var sel = document.getElementById('card-select');
-    if (!sel) return;
-    sel.addEventListener('click', function (e) { e.stopPropagation(); });
-    sel.addEventListener('change', function (e) {
-      e.stopPropagation();
-      if (sel.value === '__add__') { addCardFlow(s, sel); return; }
-      s.card = sel.value;
-    });
+    var btn = document.getElementById('card-change');
+    if (btn) btn.addEventListener('click', function (e) { e.stopPropagation(); openCardSheet(s); });
   }
-  async function addCardFlow(s, sel) {
+  function openCardSheet(s) {
+    document.getElementById('sheet-title').textContent = 'Choose a card';
+    var grid = document.getElementById('sheet-grid');
+    grid.innerHTML = cardChips(s);
+    grid.onclick = function (e) {
+      var ch = e.target.closest('.cchip'); if (!ch) return;
+      var v = ch.getAttribute('data-card');
+      if (v === '__add__') { closeSheet(); addCardFlow(s); return; }
+      s.card = v; closeSheet(); render();
+    };
+    sheetBd.classList.add('open'); sheet.classList.add('open');
+  }
+  async function addCardFlow(s) {
     var name = window.prompt('New card name (e.g. Krungthai Travel):');
-    if (!name || !name.trim()) { sel.value = s.card || ''; return; }
+    if (!name || !name.trim()) { return; }
     var last4 = window.prompt('Card last-4 digits (for auto-detect):');
     if (!last4 || !/^\d{4}$/.test(last4.trim())) {
-      alert('Last-4 must be exactly 4 digits.'); sel.value = s.card || ''; return;
+      alert('Last-4 must be exactly 4 digits.'); return;
     }
     try {
       cardOptions = await DataSource.saveCard(last4.trim(), name.trim());
@@ -259,7 +266,6 @@
       render();
     } catch (err) {
       alert('Add card failed: ' + (err && err.message ? err.message : err));
-      sel.value = s.card || '';
     }
   }
 
@@ -323,6 +329,7 @@
     if (btn) btn.addEventListener('click', function (e) { e.stopPropagation(); openSheet(s); });
   }
   function openSheet(s) {
+    document.getElementById('sheet-title').textContent = 'Choose a category';
     var grid = document.getElementById('sheet-grid');
     grid.innerHTML = gridChips(s);
     grid.onclick = function (e) {
@@ -363,7 +370,7 @@
   function wireSwipe() {
     var card = document.getElementById('card'); if (!card) return;
     card.addEventListener('pointerdown', function (e) {
-      if (e.target.closest('.fpill, .btn, .cat-change, .card-select, .card-row')) return;
+      if (e.target.closest('.fpill, .btn, .cat-change')) return;
       drag = { card: card, x0: e.clientX, y0: e.clientY, lock: null };
       card.setPointerCapture(e.pointerId);
     });
