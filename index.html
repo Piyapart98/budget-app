@@ -26,17 +26,8 @@
     <span id="nudge-text">🧾 Slips to review</span><span class="chev">›</span>
   </a>
 
-  <div class="section-head" id="cards-due-head" style="display:none;">
-    <div class="section-title">Cards due</div>
-    <span class="section-edit" id="cards-due-edit">Edit</span>
-  </div>
+  <div class="section-title" id="cards-due-title" style="display:none;">Cards due</div>
   <div class="cd-list" id="cards-due" style="display:none;"></div>
-
-  <div class="section-head" id="utils-due-head" style="display:none;">
-    <div class="section-title">Utility &amp; Subs</div>
-    <span class="section-edit" id="utils-due-edit">Edit</span>
-  </div>
-  <div class="cd-list" id="utils-due" style="display:none;"></div>
 
   <div class="section-title">Recent spending</div>
   <div class="card" id="feed"><div class="soft-note">Loading…</div></div>
@@ -136,31 +127,29 @@
 })();
 </script>
 
-<!-- Bottom sheet: set/change a due day, add/edit a utility, or track a card -->
+<!-- Day-picker bottom sheet (set / change a card's payment due day) -->
 <div class="sheet-back" id="cd-sheet-back">
   <div class="sheet">
-    <h3 id="cd-sheet-title">When is this due?</h3>
-    <p id="cd-sheet-desc">Pick the day of the month the payment is due.</p>
-    <div id="cd-sheet-fields"></div>
+    <h3 id="cd-sheet-title">When is this card due?</h3>
+    <p>Pick the day of the month the payment is due.</p>
     <div class="day-grid" id="cd-day-grid"></div>
     <div class="sheet-preview" id="cd-sheet-preview"></div>
     <div class="sheet-actions">
-      <button class="btn-remove" id="cd-sheet-remove" style="display:none;">Remove</button>
       <button class="btn-cancel" id="cd-sheet-cancel">Cancel</button>
-      <button class="btn-save" id="cd-sheet-save">Save</button>
+      <button class="btn-save" id="cd-sheet-save">Save due day</button>
     </div>
   </div>
 </div>
 
 <script>
-/* Homepage trackers — Cards due + Utility & Subs. Both count down the same way
-   (due_day + paid_for; Mark paid advances paid_for to the next cycle; the badge
-   auto-reverts ~SOON days before the next due date). Cards come from cards.json /
-   card_cycles.json (+ a statement-due override from verify.json); utilities are
-   standalone items in utilities.json. Each section has an Edit toggle to add or
-   remove items. All derived live. */
+/* Cards due — payment due-date countdown. Hybrid source: a current statement's
+   parsed due_date + balance when available, else a manually-set due day. Rollover
+   rule is "overdue until paid" — a passed due date stays overdue until the user
+   taps Mark paid (which advances paid_for to the next cycle). All derived live. */
 (function () {
   'use strict';
+  var listEl  = document.getElementById('cards-due');
+  var titleEl = document.getElementById('cards-due-title');
   var SOON = 5;            // promote (red) when due within this many days
   var DAY = 86400000;
 
@@ -189,41 +178,21 @@
   function fmtDue(d) {
     return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   }
-  function esc(s) { return Mock.escapeHtml(s); }
 
   var TODAY = midnight(new Date());
-
-  // ---- data ----
   var cardsCache = [];      // [{last4, name}]
   var cyclesCache = {};     // {last4: {due_day, paid_for}}
   var stmtByCard = {};      // {last4: {due_date, statement_total}}
-  var utilsCache = [];      // [{id, name, amount, due_day, paid_for}]
-  var editMode = { cards: false, utils: false };
-  var stateBy = { cards: {}, utils: {} };
+  var stateByCard = {};     // last computed state per last4 (for click handlers)
 
-  // ---- normalize each tracker's items into one shape for the engine ----
-  function cardEntries() {
-    return cardsCache.map(function (c) {
-      var cy = cyclesCache[c.last4] || {};
-      return { tracker: 'cards', key: c.last4, name: (c.name || ('*' + c.last4)), emoji: '💳',
-        dueDay: (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null,
-        paidFor: cy.paid_for || null, amount: null, stmt: stmtByCard[c.last4] || null };
-    });
-  }
-  function utilEntries() {
-    return utilsCache.map(function (u) {
-      return { tracker: 'utils', key: String(u.id), name: (u.name || 'Untitled'), emoji: '🔁',
-        dueDay: (u.due_day != null && u.due_day !== '') ? Number(u.due_day) : null,
-        paidFor: u.paid_for || null,
-        amount: (u.amount != null && u.amount !== '') ? u.amount : null, stmt: null };
-    });
-  }
+  function computeState(card) {
+    var cy = cyclesCache[card.last4] || {};
+    var dueDay = (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null;
+    var paidFor = cy.paid_for || null;
+    var stmt = stmtByCard[card.last4] || null;
+    var s = { card: card, dueDay: dueDay };
 
-  // ---- countdown engine (shared by both trackers) ----
-  function computeState(e) {
-    var dueDay = e.dueDay, paidFor = e.paidFor || null, stmt = e.stmt || null;
-    var s = { tracker: e.tracker, key: e.key, name: e.name, emoji: e.emoji, dueDay: dueDay, amount: e.amount };
-    // Statement override (cards only) — while the statement's due date is unpaid.
+    // Statement override — only while the statement's due date is still unpaid.
     if (stmt && stmt.due_date && (!paidFor || stmt.due_date > paidFor)) {
       s.dueTarget = parseISO(stmt.due_date);
       s.amount = (stmt.statement_total != null) ? stmt.statement_total : null;
@@ -231,12 +200,18 @@
     } else if (dueDay) {
       s.dueTarget = paidFor ? firstStrictlyAfter(dueDay, parseISO(paidFor))
                             : firstOnOrAfter(dueDay, TODAY);
+      s.amount = null;
     } else {
       s.kind = 'set'; s.sortKey = 1e9; return s;
     }
+
     s.days = Math.round((midnight(s.dueTarget) - TODAY) / DAY);
+
+    // Paid display: the latest (or upcoming) bill is settled and the next one
+    // isn't imminent. Never when a statement says the current bill is unpaid.
     var prevISO = dueDay ? isoOf(prevOnOrBefore(dueDay, TODAY)) : null;
     var paidDisplay = !s.fromStatement && paidFor && prevISO && paidFor >= prevISO && s.days > SOON;
+
     if (paidDisplay)        { s.kind = 'paid';     s.sortKey = 1e8 + s.days; }
     else if (s.days < 0)    { s.kind = 'overdue';  s.sortKey = s.days; }
     else if (s.days <= SOON){ s.kind = 'promoted'; s.sortKey = s.days; }
@@ -244,311 +219,122 @@
     return s;
   }
 
-  // ---- row rendering ----
-  function shell(cls, s, main, right) {
-    return '<div class="cd-card ' + cls + '" data-tracker="' + s.tracker + '" data-key="' + esc(s.key) + '">' +
-      '<span class="cd-emoji">' + s.emoji + '</span>' +
-      '<div class="cd-main"><div class="cd-name">' + esc(s.name) + '</div>' + main + '</div>' +
-      '<div class="cd-right">' + right + '</div></div>';
-  }
-  function rowHtml(s, edit) {
-    var dk = 'data-tracker="' + s.tracker + '" data-key="' + esc(s.key) + '"';
-    if (edit) {
-      var amtE = (s.amount != null) ? '<span class="cd-amt">' + Mock.fmtBaht(s.amount) + '</span> · ' : '';
-      return '<div class="cd-card cd-editing" ' + dk + '>' +
-        '<button class="cd-remove" data-action="remove" ' + dk + ' aria-label="remove">✕</button>' +
-        '<span class="cd-emoji">' + s.emoji + '</span>' +
-        '<div class="cd-main"><div class="cd-name">' + esc(s.name) + '</div>' +
-        '<div class="cd-sub">' + amtE + 'due ' + fmtDue(s.dueTarget) + '</div></div></div>';
+  function rowHtml(s) {
+    var c = s.card, name = Mock.escapeHtml(c.name || ('*' + c.last4));
+    if (s.kind === 'set') {
+      return cardHtml('', name, '<div class="cd-sub">no due day set</div>',
+        '<span class="cd-setlink" data-action="set" data-l4="' + c.last4 + '">Set due day ›</span>');
     }
     if (s.kind === 'paid') {
-      return shell('cd-done', s, '<div class="cd-sub">next due ' + fmtDue(s.dueTarget) + '</div>',
-        '<span class="cd-status" data-action="undo" ' + dk + ' title="tap to undo">✓ paid</span>');
+      return cardHtml('cd-done', name, '<div class="cd-sub">next due ' + fmtDue(s.dueTarget) + '</div>',
+        '<span class="cd-status" data-action="undo" data-l4="' + c.last4 + '" title="tap to undo">✓ paid</span>');
     }
     var amt = (s.amount != null) ? '<span class="cd-amt">' + Mock.fmtBaht(s.amount) + '</span> · ' : '';
     var sub = '<div class="cd-sub">' + amt + 'due ' + fmtDue(s.dueTarget) +
-      ' <button class="cd-edit" data-action="edit" ' + dk + ' aria-label="edit">✎</button></div>';
+      ' <button class="cd-edit" data-action="edit" data-l4="' + c.last4 + '" aria-label="change due day">✎</button></div>';
     var count = s.days < 0 ? 'overdue by ' + (-s.days) + ' day' + (s.days === -1 ? '' : 's')
       : s.days === 0 ? 'due today'
       : s.days === 1 ? 'due tomorrow'
       : 'in ' + s.days + ' days';
     var right = '<span class="cd-count">' + count + '</span>' +
-      '<button class="cd-paid-btn" data-action="paid" ' + dk + '>Mark paid</button>';
+      '<button class="cd-paid-btn" data-action="paid" data-l4="' + c.last4 + '">Mark paid</button>';
     var cls = s.kind === 'overdue' ? 'cd-overdue' : s.kind === 'promoted' ? 'cd-promoted' : 'cd-calm';
-    return shell(cls, s, sub, right);
+    return cardHtml(cls, name, sub, right);
+  }
+  function cardHtml(cls, name, main, right) {
+    return '<div class="cd-card ' + cls + '"><span class="cd-emoji">💳</span>' +
+      '<div class="cd-main"><div class="cd-name">' + name + '</div>' + main + '</div>' +
+      '<div class="cd-right">' + right + '</div></div>';
   }
 
-  // ---- tracker config + render ----
-  var TRACKERS = {
-    cards: { id: 'cards', addLabel: '+ Add card', entries: cardEntries,
-      headEl: document.getElementById('cards-due-head'),
-      listEl: document.getElementById('cards-due'),
-      toggleEl: document.getElementById('cards-due-edit') },
-    utils: { id: 'utils', addLabel: '+ Add utility', entries: utilEntries,
-      headEl: document.getElementById('utils-due-head'),
-      listEl: document.getElementById('utils-due'),
-      toggleEl: document.getElementById('utils-due-edit') }
-  };
-
-  function renderTracker(cfg) {
-    var states = cfg.entries().map(computeState)
-      .filter(function (s) { return s.kind !== 'set'; })   // only tracked items
-      .sort(function (a, b) { return a.sortKey - b.sortKey; });
-    stateBy[cfg.id] = {};
-    states.forEach(function (s) { stateBy[cfg.id][s.key] = s; });
-    var edit = editMode[cfg.id];
-    cfg.headEl.style.display = '';
-    cfg.listEl.style.display = '';
-    cfg.toggleEl.textContent = edit ? 'Done' : 'Edit';
-    var html = states.map(function (s) { return rowHtml(s, edit); }).join('');
-    if (edit) {
-      html += '<div class="cd-add" data-action="add" data-tracker="' + cfg.id + '">' + cfg.addLabel + '</div>';
-    } else if (!states.length) {
-      html = '<div class="cd-empty">Nothing tracked yet — tap Edit to add.</div>';
-    }
-    cfg.listEl.innerHTML = html;
+  function hide() { titleEl.style.display = 'none'; listEl.style.display = 'none'; }
+  function render() {
+    if (!cardsCache.length) { hide(); return; }
+    var states = cardsCache.map(computeState).sort(function (a, b) { return a.sortKey - b.sortKey; });
+    stateByCard = {};
+    states.forEach(function (s) { stateByCard[s.card.last4] = s; });
+    titleEl.style.display = ''; listEl.style.display = '';
+    listEl.innerHTML = states.map(rowHtml).join('');
   }
-  function render() { renderTracker(TRACKERS.cards); renderTracker(TRACKERS.utils); }
 
   // ---- mutations (optimistic, revert on failure) ----
-  function findUtil(id) {
-    for (var i = 0; i < utilsCache.length; i++) {
-      if (String(utilsCache[i].id) === String(id)) return utilsCache[i];
-    }
-    return null;
-  }
-  async function persistCycle(l4, patch, prev) {
+  async function persist(l4, patch, prevCycle) {
     try { await DataSource.saveCardCycle(l4, patch); }
     catch (err) {
-      if (prev === undefined) delete cyclesCache[l4]; else cyclesCache[l4] = prev;
+      if (prevCycle === undefined) delete cyclesCache[l4]; else cyclesCache[l4] = prevCycle;
       render();
       alert("Couldn't save that just now: " + (err && err.message ? err.message : err));
     }
   }
-  async function persistUtilSave(patch, prevList) {
-    try { utilsCache = (await DataSource.saveUtility(patch)) || utilsCache; render(); }
-    catch (err) {
-      utilsCache = prevList; render();
-      alert("Couldn't save that just now: " + (err && err.message ? err.message : err));
-    }
-  }
-
-  function markPaid(tracker, key) {
-    var s = stateBy[tracker][key]; if (!s || !s.dueTarget) return;
+  function markPaid(l4) {
+    var s = stateByCard[l4]; if (!s || !s.dueTarget) return;
     var iso = isoOf(midnight(s.dueTarget));
-    if (tracker === 'cards') {
-      var prev = cyclesCache[key] ? Object.assign({}, cyclesCache[key]) : undefined;
-      cyclesCache[key] = Object.assign({}, cyclesCache[key], { paid_for: iso }); render();
-      persistCycle(key, { paid_for: iso }, prev);
-    } else {
-      var u = findUtil(key); if (!u) return;
-      var prevList = utilsCache.map(function (x) { return Object.assign({}, x); });
-      u.paid_for = iso; render();
-      persistUtilSave({ id: key, paid_for: iso }, prevList);
-    }
+    var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
+    cyclesCache[l4] = Object.assign({}, cyclesCache[l4], { paid_for: iso }); render();
+    persist(l4, { paid_for: iso }, prev);
   }
-  function undoPaid(tracker, key) {
-    if (tracker === 'cards') {
-      var prev = cyclesCache[key] ? Object.assign({}, cyclesCache[key]) : undefined;
-      var nc = Object.assign({}, cyclesCache[key]); delete nc.paid_for; cyclesCache[key] = nc; render();
-      persistCycle(key, { paid_for: null }, prev);
-    } else {
-      var u = findUtil(key); if (!u) return;
-      var prevList = utilsCache.map(function (x) { return Object.assign({}, x); });
-      delete u.paid_for; render();
-      persistUtilSave({ id: key, paid_for: null }, prevList);
-    }
-  }
-  function removeItem(tracker, key) {
-    if (tracker === 'cards') {
-      // Remove from the countdown only — clears due_day/paid_for but keeps the
-      // card in cards.json so slip OCR auto-detect is unaffected.
-      var prev = cyclesCache[key] ? Object.assign({}, cyclesCache[key]) : undefined;
-      var nc = Object.assign({}, cyclesCache[key]); delete nc.due_day; delete nc.paid_for;
-      cyclesCache[key] = nc; render();
-      persistCycle(key, { due_day: null, paid_for: null }, prev);
-    } else {
-      var prevList = utilsCache.map(function (x) { return Object.assign({}, x); });
-      utilsCache = utilsCache.filter(function (u) { return String(u.id) !== String(key); }); render();
-      (async function () {
-        try { utilsCache = (await DataSource.deleteUtility(key)) || utilsCache; render(); }
-        catch (err) {
-          utilsCache = prevList; render();
-          alert("Couldn't remove that just now: " + (err && err.message ? err.message : err));
-        }
-      })();
-    }
+  function undoPaid(l4) {
+    var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
+    var nc = Object.assign({}, cyclesCache[l4]); delete nc.paid_for; cyclesCache[l4] = nc; render();
+    persist(l4, { paid_for: null }, prev);
   }
 
-  // ---- toggles + delegated click handling ----
-  Object.keys(TRACKERS).forEach(function (id) {
-    var cfg = TRACKERS[id];
-    cfg.toggleEl.addEventListener('click', function () { editMode[id] = !editMode[id]; renderTracker(cfg); });
-    cfg.listEl.addEventListener('click', function (e) {
-      var t = e.target.closest('[data-action]'); if (!t) return;
-      var act = t.getAttribute('data-action');
-      var tracker = t.getAttribute('data-tracker'), key = t.getAttribute('data-key');
-      if (act === 'paid') markPaid(tracker, key);
-      else if (act === 'undo') undoPaid(tracker, key);
-      else if (act === 'remove') removeItem(tracker, key);
-      else if (act === 'add') openAddSheet(tracker);
-      else if (act === 'edit') openEditSheet(tracker, key);
-    });
+  listEl.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-action]'); if (!t) return;
+    var l4 = t.getAttribute('data-l4'), act = t.getAttribute('data-action');
+    if (act === 'paid') markPaid(l4);
+    else if (act === 'undo') undoPaid(l4);
+    else openSheet(l4);             // 'edit' or 'set'
   });
 
-  // ---- bottom sheet (set due day / add-edit utility / track a card) ----
+  // ---- day-picker sheet ----
   var sheetBack = document.getElementById('cd-sheet-back');
   var grid = document.getElementById('cd-day-grid');
-  var titleEl = document.getElementById('cd-sheet-title');
-  var descEl = document.getElementById('cd-sheet-desc');
-  var fieldsEl = document.getElementById('cd-sheet-fields');
-  var previewEl = document.getElementById('cd-sheet-preview');
-  var removeBtn = document.getElementById('cd-sheet-remove');
-  var saveBtn = document.getElementById('cd-sheet-save');
-  var sheet = null;        // active sheet state, or null when closed
+  var editingL4 = null, pendingDay = null;
 
-  function buildDayGrid() {
+  function openSheet(l4) {
+    editingL4 = l4;
+    var cy = cyclesCache[l4] || {};
+    pendingDay = (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null;
+    var card = cardsCache.filter(function (c) { return c.last4 === l4; })[0];
+    document.getElementById('cd-sheet-title').textContent =
+      'When is ' + ((card && card.name) || ('*' + l4)) + ' due?';
     grid.innerHTML = '';
     for (var d = 1; d <= 28; d++) {
       var cell = document.createElement('div');
       cell.className = 'day-cell'; cell.textContent = d; cell.setAttribute('data-day', d);
       grid.appendChild(cell);
     }
+    refreshSheet();
+    sheetBack.classList.add('open');
   }
-  function refreshGrid() {
+  function refreshSheet() {
     Array.prototype.forEach.call(grid.querySelectorAll('.day-cell'), function (cell) {
-      cell.classList.toggle('sel', Number(cell.getAttribute('data-day')) === sheet.day);
+      cell.classList.toggle('sel', Number(cell.getAttribute('data-day')) === pendingDay);
     });
-    if (sheet.day) {
-      var due = firstOnOrAfter(sheet.day, TODAY);
+    var pv = document.getElementById('cd-sheet-preview');
+    if (pendingDay) {
+      var due = firstOnOrAfter(pendingDay, TODAY);
       var days = Math.round((midnight(due) - TODAY) / DAY);
-      previewEl.textContent = 'Next due ' + fmtDue(due) + ' — ' + (days <= SOON ? '⚠ ' : '') +
+      pv.textContent = 'Next due ' + fmtDue(due) + ' — ' + (days <= SOON ? '⚠ ' : '') +
         (days === 0 ? 'due today' : 'in ' + days + ' day' + (days === 1 ? '' : 's')) + '.';
-    } else { previewEl.textContent = 'Pick a day.'; }
+    } else { pv.textContent = 'Pick a day.'; }
   }
-  function utilFields() {
-    return '<label class="sheet-field"><span>Name</span>' +
-      '<input id="cd-f-name" type="text" placeholder="e.g. Netflix" value="' + esc(sheet.name || '') + '"></label>' +
-      '<label class="sheet-field"><span>Amount (฿)</span>' +
-      '<input id="cd-f-amount" type="number" inputmode="decimal" placeholder="e.g. 419" value="' +
-      esc(sheet.amount == null ? '' : sheet.amount) + '"></label>';
-  }
-  function cardChips() {
-    var tracked = {};
-    Object.keys(cyclesCache).forEach(function (l4) { if (cyclesCache[l4] && cyclesCache[l4].due_day) tracked[l4] = true; });
-    var chips = cardsCache.filter(function (c) { return !tracked[c.last4]; }).map(function (c) {
-      return '<span class="chip' + (sheet.cardL4 === c.last4 ? ' selected' : '') + '" data-l4="' +
-        esc(c.last4) + '">' + esc(c.name || ('*' + c.last4)) + '</span>';
-    }).join('');
-    chips += '<span class="chip" data-l4="__new__">➕ New card</span>';
-    return '<div class="sheet-chips">' + chips + '</div>';
-  }
-
-  function openSheet() { buildDayGrid(); refreshGrid(); sheetBack.classList.add('open'); }
-  function closeSheet() { sheetBack.classList.remove('open'); sheet = null; }
-
-  function openEditSheet(tracker, key) {
-    var s = stateBy[tracker][key];
-    if (tracker === 'cards') {
-      var cy = cyclesCache[key] || {};
-      sheet = { mode: 'card-day', tracker: 'cards', key: key,
-        day: (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null };
-      titleEl.textContent = 'When is ' + ((s && s.name) || ('*' + key)) + ' due?';
-      descEl.textContent = 'Pick the day of the month the payment is due.';
-      fieldsEl.innerHTML = '';
-      removeBtn.style.display = 'none';
-      saveBtn.textContent = 'Save due day';
-    } else {
-      var u = findUtil(key) || {};
-      sheet = { mode: 'util-edit', tracker: 'utils', key: key,
-        day: (u.due_day != null && u.due_day !== '') ? Number(u.due_day) : null,
-        name: u.name || '', amount: (u.amount == null ? '' : u.amount) };
-      titleEl.textContent = 'Edit ' + (u.name || 'utility');
-      descEl.textContent = 'Name, amount, and the day it is due each month.';
-      fieldsEl.innerHTML = utilFields();
-      removeBtn.style.display = '';
-      saveBtn.textContent = 'Save';
-    }
-    openSheet();
-  }
-  function openAddSheet(tracker) {
-    if (tracker === 'cards') {
-      sheet = { mode: 'card-add', tracker: 'cards', key: null, day: null, cardL4: null };
-      titleEl.textContent = 'Track a card';
-      descEl.textContent = 'Pick a card and the day its payment is due.';
-      fieldsEl.innerHTML = cardChips();
-      removeBtn.style.display = 'none';
-      saveBtn.textContent = 'Save due day';
-    } else {
-      sheet = { mode: 'util-add', tracker: 'utils', key: null, day: null, name: '', amount: '' };
-      titleEl.textContent = 'Add utility';
-      descEl.textContent = 'Name, amount, and the day it is due each month.';
-      fieldsEl.innerHTML = utilFields();
-      removeBtn.style.display = 'none';
-      saveBtn.textContent = 'Add utility';
-    }
-    openSheet();
-  }
-
-  // keep text inputs / card chips in sync with sheet state
-  fieldsEl.addEventListener('input', function (e) {
-    if (!sheet) return;
-    if (e.target.id === 'cd-f-name') sheet.name = e.target.value;
-    else if (e.target.id === 'cd-f-amount') sheet.amount = e.target.value;
-  });
-  fieldsEl.addEventListener('click', function (e) {
-    var chip = e.target.closest('.chip'); if (!chip || !sheet) return;
-    var l4 = chip.getAttribute('data-l4');
-    if (l4 === '__new__') { addNewCard(); return; }
-    sheet.cardL4 = l4;
-    Array.prototype.forEach.call(fieldsEl.querySelectorAll('.chip'), function (c) {
-      c.classList.toggle('selected', c.getAttribute('data-l4') === l4);
-    });
-  });
-  async function addNewCard() {
-    var name = window.prompt('New card name (e.g. Krungthai Travel):');
-    if (!name || !name.trim()) return;
-    var last4 = window.prompt('Card last-4 digits (for auto-detect):');
-    if (!last4 || !/^\d{4}$/.test(last4.trim())) { alert('Last-4 must be exactly 4 digits.'); return; }
-    try {
-      cardsCache = (await DataSource.saveCard(last4.trim(), name.trim())) || cardsCache;
-      if (sheet) { sheet.cardL4 = last4.trim(); fieldsEl.innerHTML = cardChips(); }
-    } catch (err) { alert('Add card failed: ' + (err && err.message ? err.message : err)); }
-  }
-
+  function closeSheet() { sheetBack.classList.remove('open'); }
   grid.addEventListener('click', function (e) {
-    var cell = e.target.closest('.day-cell'); if (!cell || !sheet) return;
-    sheet.day = Number(cell.getAttribute('data-day')); refreshGrid();
+    var cell = e.target.closest('.day-cell'); if (!cell) return;
+    pendingDay = Number(cell.getAttribute('data-day')); refreshSheet();
   });
   document.getElementById('cd-sheet-cancel').addEventListener('click', closeSheet);
   sheetBack.addEventListener('click', function (e) { if (e.target === sheetBack) closeSheet(); });
-  removeBtn.addEventListener('click', function () {
-    if (!sheet) { closeSheet(); return; }
-    var tracker = sheet.tracker, key = sheet.key; closeSheet();
-    if (key != null) removeItem(tracker, key);
-  });
-  saveBtn.addEventListener('click', function () {
-    if (!sheet) { closeSheet(); return; }
-    var m = sheet.mode;
-    if (m === 'card-day' || m === 'card-add') {
-      var l4 = (m === 'card-add') ? sheet.cardL4 : sheet.key;
-      if (!l4) { alert('Pick a card.'); return; }
-      if (!sheet.day) { alert('Pick a due day.'); return; }
-      var day = sheet.day;
-      var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
-      var nc = Object.assign({}, cyclesCache[l4]); nc.due_day = day; delete nc.paid_for; cyclesCache[l4] = nc;
-      closeSheet(); render();
-      persistCycle(l4, { due_day: day, paid_for: null }, prev);
-    } else {  // util-add / util-edit
-      var nm = (sheet.name || '').trim();
-      if (!nm) { alert('Name is required.'); return; }
-      if (!sheet.day) { alert('Pick a due day.'); return; }
-      var patch = { name: nm, amount: (sheet.amount === '' || sheet.amount == null) ? '' : sheet.amount, due_day: sheet.day };
-      if (sheet.key != null) patch.id = sheet.key;
-      var prevList = utilsCache.map(function (x) { return Object.assign({}, x); });
-      closeSheet();
-      persistUtilSave(patch, prevList);
-    }
+  document.getElementById('cd-sheet-save').addEventListener('click', function () {
+    if (!editingL4 || !pendingDay) { closeSheet(); return; }
+    var l4 = editingL4, day = pendingDay;
+    var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
+    var nc = Object.assign({}, cyclesCache[l4]); nc.due_day = day; delete nc.paid_for;
+    cyclesCache[l4] = nc;
+    closeSheet(); render();
+    persist(l4, { due_day: day, paid_for: null }, prev);
   });
 
   // ---- load ----
@@ -556,11 +342,9 @@
     try {
       var cardsP = DataSource.loadCards().catch(function () { return []; });
       var cyclesP = DataSource.loadCardCycles().catch(function () { return {}; });
-      var utilsP = DataSource.loadUtilities().catch(function () { return []; });
       var verP = DataSource.loadVerification().catch(function () { return { cards: [] }; });
       cardsCache = (await cardsP) || [];
       cyclesCache = (await cyclesP) || {};
-      utilsCache = (await utilsP) || [];
       var ver = await verP;
       var vcards = (ver && ver.cards) || [];
       stmtByCard = {};
@@ -568,7 +352,7 @@
         if (c && c.card_last4) stmtByCard[c.card_last4] = { due_date: c.due_date, statement_total: c.statement_total };
       });
       render();
-    } catch (e) { try { render(); } catch (_) {} }
+    } catch (e) { hide(); }
   })();
 })();
 </script>

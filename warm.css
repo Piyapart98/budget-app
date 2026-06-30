@@ -89,27 +89,6 @@ h1{font-family:var(--serif);font-size:24px;font-weight:400;color:var(--text);}
 .cd-overdue .cd-sub{color:rgba(255,255,255,.85);}
 .cd-overdue .cd-paid-btn{background:rgba(255,255,255,.18);color:#fff;border-color:rgba(255,255,255,.4);}
 .cd-overdue .cd-edit{color:rgba(255,255,255,.7);}
-/* Section header with an inline Edit/Done toggle (Cards due, Utility & Subs) */
-.section-head{display:flex;align-items:baseline;justify-content:space-between;margin:18px 0 8px;}
-.section-head .section-title{margin:0;}
-.section-edit{font-size:13px;color:var(--green);font-weight:600;cursor:pointer;
-              font-family:var(--sans);padding:4px;}
-/* Edit mode — removable rows + an "+ Add" row */
-.cd-card.cd-editing{gap:10px;}
-.cd-remove{flex:none;width:26px;height:26px;border-radius:999px;border:none;cursor:pointer;
-           background:var(--red);color:#fff;font-size:14px;line-height:1;font-family:var(--sans);}
-.cd-add{border:1px dashed var(--border);border-radius:16px;padding:13px 16px;text-align:center;
-        color:var(--green);font-weight:600;font-size:14px;cursor:pointer;background:var(--surface);}
-.cd-add:active{background:var(--bg);}
-.cd-empty{font-size:12px;color:var(--text-faint);padding:6px 2px;}
-/* Sheet text fields (utility name / amount) */
-.sheet-field{display:block;margin-bottom:12px;}
-.sheet-field span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;
-                  color:var(--text-faint);margin-bottom:4px;}
-.sheet-field input{width:100%;font-family:var(--sans);font-size:15px;color:var(--text);
-                   background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:11px 12px;}
-.sheet-chips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px;}
-.sheet-actions .btn-remove{flex:none;background:#fdf0ee;color:#a4453a;padding:13px 16px;}
 
 /* Day-picker bottom sheet (set / change a due day) */
 .sheet-back{position:fixed;inset:0;background:rgba(20,18,14,.4);z-index:50;
