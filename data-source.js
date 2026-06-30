@@ -534,6 +534,90 @@
     return map;
   }
 
+  // loadUtilities — recurring utilities/subs for the homepage countdown,
+  // [{id, name, amount, due_day, paid_for}, ...]. local → /api/utilities;
+  // github → utilities.json in budget-data. Returns [] when absent.
+  async function loadUtilities() {
+    if (MODE === 'local') {
+      var res = await fetch('/api/utilities');
+      if (!res.ok) throw new Error('GET /api/utilities: ' + res.status);
+      var data = await res.json();
+      return Array.isArray(data) ? data : [];
+    }
+    var got = await ghGetCached('utilities.json');
+    if (!got.content) return [];
+    try { var arr = JSON.parse(got.content); return Array.isArray(arr) ? arr : []; }
+    catch (e) { return []; }
+  }
+
+  // saveUtility — add or patch one utility. Omit id (or pass an unknown id) to
+  // create; pass an existing id to patch. patch = {id?, name?, amount?, due_day?,
+  // paid_for?}; pass due_day:null / paid_for:null to clear. local → POST
+  // /api/utilities; github → read-merge-PUT utilities.json (ghPut clears cache).
+  // Returns the full updated [{...}] list.
+  async function saveUtility(patch) {
+    patch = patch || {};
+    if (MODE === 'local') {
+      var res = await fetch('/api/utilities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      var data = await res.json().catch(function () { return []; });
+      if (!res.ok) throw new Error((data && data.error) || 'POST /api/utilities: ' + res.status);
+      return Array.isArray(data) ? data : [];
+    }
+    var got = await ghGet('utilities.json');
+    var items = [];
+    if (got.content) { try { items = JSON.parse(got.content); } catch (e) { items = []; } }
+    if (!Array.isArray(items)) items = [];
+    var uid = String(patch.id || '').trim();
+    var idx = uid ? items.findIndex(function (u) { return String(u.id) === uid; }) : -1;
+    var entry = idx >= 0 ? Object.assign({}, items[idx]) : {};
+    if ('name' in patch) entry.name = String(patch.name == null ? '' : patch.name).trim();
+    if ('amount' in patch) entry.amount = (patch.amount == null ? '' : patch.amount);
+    if ('due_day' in patch) {
+      if (patch.due_day === null || patch.due_day === '') delete entry.due_day;
+      else entry.due_day = Number(patch.due_day);
+    }
+    if ('paid_for' in patch) {
+      if (!patch.paid_for) delete entry.paid_for;
+      else entry.paid_for = String(patch.paid_for);
+    }
+    if (idx >= 0) { entry.id = items[idx].id; items[idx] = entry; }
+    else {
+      var slug = (entry.name || 'item').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'item';
+      entry.id = slug + '-' + Date.now().toString(36);
+      items.push(entry);
+    }
+    await ghPut('utilities.json', JSON.stringify(items, null, 2), got.sha, 'save utility from phone');
+    return items;
+  }
+
+  // deleteUtility — remove one utility by id. local → POST /api/utilities/delete;
+  // github → read-filter-PUT utilities.json. Returns the updated list.
+  async function deleteUtility(id) {
+    id = String(id || '').trim();
+    if (!id) throw new Error('utility id is required');
+    if (MODE === 'local') {
+      var res = await fetch('/api/utilities/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id }),
+      });
+      var data = await res.json().catch(function () { return []; });
+      if (!res.ok) throw new Error((data && data.error) || 'POST /api/utilities/delete: ' + res.status);
+      return Array.isArray(data) ? data : [];
+    }
+    var got = await ghGet('utilities.json');
+    var items = [];
+    if (got.content) { try { items = JSON.parse(got.content); } catch (e) { items = []; } }
+    if (!Array.isArray(items)) items = [];
+    items = items.filter(function (u) { return String(u.id) !== id; });
+    await ghPut('utilities.json', JSON.stringify(items, null, 2), got.sha, 'delete utility from phone');
+    return items;
+  }
+
   // loadVerification — statement vs DB cross-check.
   // Local mode: calls /api/verify (optional ?card=XXXX to scope to one card),
   //   which parses the PDFs live.
@@ -1475,6 +1559,9 @@
     saveCard:            saveCard,
     loadCardCycles:      loadCardCycles,
     saveCardCycle:       saveCardCycle,
+    loadUtilities:       loadUtilities,
+    saveUtility:         saveUtility,
+    deleteUtility:       deleteUtility,
     loadVerification:    loadVerification,
     archiveStatement:    archiveStatement,
     submitEntry:         submitEntry,
