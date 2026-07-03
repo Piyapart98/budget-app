@@ -535,7 +535,7 @@
   }
 
   // loadUtilities — recurring utilities/subs for the homepage countdown,
-  // [{id, name, due_day, paid_for}, ...]. local → /api/utilities;
+  // [{id, name, due_day, emoji?, paid_for}, ...]. local → /api/utilities;
   // github → utilities.json in budget-data. Returns [] when absent.
   async function loadUtilities() {
     if (MODE === 'local') {
@@ -552,7 +552,8 @@
 
   // saveUtility — add or patch one utility. Omit id (or pass an unknown id) to
   // create; pass an existing id to patch. patch = {id?, name?, due_day?,
-  // paid_for?}; pass due_day:null / paid_for:null to clear. local → POST
+  // emoji?, paid_for?}; pass due_day:null / emoji:null / paid_for:null to
+  // clear. local → POST
   // /api/utilities; github → read-merge-PUT utilities.json (ghPut clears cache).
   // Returns the full updated [{...}] list.
   async function saveUtility(patch) {
@@ -582,6 +583,10 @@
     if ('paid_for' in patch) {
       if (!patch.paid_for) delete entry.paid_for;
       else entry.paid_for = String(patch.paid_for);
+    }
+    if ('emoji' in patch) {
+      var em = String(patch.emoji == null ? '' : patch.emoji).trim();
+      if (em) entry.emoji = em; else delete entry.emoji;
     }
     if (idx >= 0) { entry.id = items[idx].id; items[idx] = entry; }
     else {

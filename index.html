@@ -136,6 +136,10 @@
   <div class="sheet">
     <h3 id="cd-sheet-title">When is this card due?</h3>
     <p id="cd-sheet-hint">Pick the day of the month the payment is due.</p>
+    <div class="emoji-row" id="cd-sheet-emoji-row" style="display:none;">
+      <input class="emoji-box" id="cd-sheet-emoji" type="text" maxlength="8"
+             placeholder="&#x1F501;" aria-label="Reminder emoji">
+    </div>
     <input class="sheet-name" id="cd-sheet-name" type="text"
            placeholder="e.g. Netflix, Electricity" style="display:none;">
     <div class="day-grid" id="cd-day-grid"></div>
@@ -152,7 +156,7 @@
    (subscriptions/utilities), merged in one list sorted by urgency.
    Cards: hybrid source — a current statement's parsed due_date + balance when
    available, else a manually-set due day (card_cycles.json). Reminders:
-   standalone {id, name, due_day, paid_for} items in utilities.json.
+   standalone {id, name, due_day, emoji?, paid_for} items in utilities.json.
    Rollover rule is "overdue until paid" — a passed due date stays overdue until
    the user taps Mark paid (which advances paid_for to the next cycle). The
    Mark-paid button appears within ACT days of due; red styling within SOON. */
@@ -238,7 +242,7 @@
   function remState(rem) {
     var dueDay = (rem.due_day != null && rem.due_day !== '') ? Number(rem.due_day) : null;
     var s = { type: 'rem', key: String(rem.id), name: rem.name || '(unnamed)',
-              emoji: '\uD83D\uDD01', dueDay: dueDay };
+              emoji: rem.emoji || '\uD83D\uDD01', dueDay: dueDay };
     return fillCycle(s, dueDay, rem.paid_for || null, null);
   }
 
@@ -381,8 +385,36 @@
   var sheetBack = document.getElementById('cd-sheet-back');
   var grid = document.getElementById('cd-day-grid');
   var nameInput = document.getElementById('cd-sheet-name');
+  var emojiRow = document.getElementById('cd-sheet-emoji-row');
+  var emojiInput = document.getElementById('cd-sheet-emoji');
   var editing = null;               // {type, key} — key null = new reminder
   var pendingDay = null;
+
+  // Preset chips fill the free-type box; the box also takes any emoji from the
+  // keyboard. Saved value = first grapheme (fallback: trimmed string).
+  var EMOJI_PRESETS = ['🔁', '💡', '💧', '📶', '🎬', '🎵', '🏋️', '📰'];
+  EMOJI_PRESETS.forEach(function (em) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'emoji-chip'; b.textContent = em;
+    b.addEventListener('click', function () { emojiInput.value = em; markChip(); });
+    emojiRow.insertBefore(b, emojiInput);
+  });
+  function markChip() {
+    var cur = emojiInput.value.trim();
+    Array.prototype.forEach.call(emojiRow.querySelectorAll('.emoji-chip'), function (c) {
+      c.classList.toggle('sel', c.textContent === cur);
+    });
+  }
+  emojiInput.addEventListener('input', markChip);
+  function firstEmoji(str) {
+    str = String(str || '').trim();
+    if (!str) return '';
+    if (window.Intl && Intl.Segmenter) {
+      var it = new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(str)[Symbol.iterator]().next();
+      return it.done ? '' : it.value.segment;
+    }
+    return str;
+  }
 
   function openSheet(type, key) {
     editing = { type: type, key: key };
@@ -394,13 +426,17 @@
       title = 'When is ' + ((card && card.name) || ('*' + key)) + ' due?';
       hint = 'Pick the day of the month the payment is due.';
       nameInput.style.display = 'none';
+      emojiRow.style.display = 'none';
     } else {
       var rem = key ? remsCache.filter(function (u) { return String(u.id) === key; })[0] : null;
       pendingDay = (rem && rem.due_day) ? Number(rem.due_day) : null;
       nameInput.value = (rem && rem.name) || '';
+      emojiInput.value = (rem && rem.emoji) || '';
+      markChip();
       title = rem ? 'Edit ' + rem.name : 'New reminder';
       hint = 'What is it, and which day of the month is it due?';
       nameInput.style.display = '';
+      emojiRow.style.display = '';
     }
     document.getElementById('cd-sheet-title').textContent = title;
     document.getElementById('cd-sheet-hint').textContent = hint;
@@ -445,7 +481,8 @@
     } else {
       var nm = nameInput.value.trim();
       if (!nm) { nameInput.focus(); return; }
-      var patch = { name: nm, due_day: pendingDay, paid_for: null };
+      var patch = { name: nm, due_day: pendingDay, paid_for: null,
+                    emoji: firstEmoji(emojiInput.value) || null };
       if (editing.key) patch.id = editing.key;
       closeSheet();
       persistRem(patch, remsCache);

@@ -121,3 +121,9 @@ h1{font-family:var(--serif);font-size:24px;font-weight:400;color:var(--text);}
             font-family:var(--sans);cursor:pointer;text-align:left;}
 .sheet-name{width:100%;border:1px solid var(--border);border-radius:12px;padding:11px 12px;
             font-size:15px;font-family:var(--sans);margin-bottom:14px;background:var(--bg);}
+.emoji-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;}
+.emoji-chip{border:1px solid var(--border);background:var(--bg);border-radius:12px;
+            width:40px;height:40px;font-size:20px;line-height:1;cursor:pointer;padding:0;}
+.emoji-chip.sel{border-color:var(--green);background:var(--green-bg,#e8f2ea);}
+.emoji-box{width:56px;border:1px solid var(--border);border-radius:12px;padding:8px 0;
+           font-size:20px;text-align:center;background:var(--bg);font-family:var(--sans);}
