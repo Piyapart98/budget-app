@@ -26,7 +26,8 @@
     <span id="nudge-text">🧾 Slips to review</span><span class="chev">›</span>
   </a>
 
-  <div class="section-title" id="cards-due-title" style="display:none;">Cards due</div>
+  <div class="section-title sec-head" id="cards-due-title" style="display:none;"><span>Upcoming</span>
+    <span class="edit-link" id="cd-edit-toggle">Edit</span></div>
   <div class="cd-list" id="cards-due" style="display:none;"></div>
 
   <div class="section-title">Recent spending</div>
@@ -129,11 +130,14 @@
 })();
 </script>
 
-<!-- Day-picker bottom sheet (set / change a card's payment due day) -->
+<!-- Bottom sheet: set/change a card's due day, or add/edit a reminder
+     (subscription/utility) — the name field only shows for reminders. -->
 <div class="sheet-back" id="cd-sheet-back">
   <div class="sheet">
     <h3 id="cd-sheet-title">When is this card due?</h3>
-    <p>Pick the day of the month the payment is due.</p>
+    <p id="cd-sheet-hint">Pick the day of the month the payment is due.</p>
+    <input class="sheet-name" id="cd-sheet-name" type="text"
+           placeholder="e.g. Netflix, Electricity" style="display:none;">
     <div class="day-grid" id="cd-day-grid"></div>
     <div class="sheet-preview" id="cd-sheet-preview"></div>
     <div class="sheet-actions">
@@ -144,15 +148,21 @@
 </div>
 
 <script>
-/* Cards due — payment due-date countdown. Hybrid source: a current statement's
-   parsed due_date + balance when available, else a manually-set due day. Rollover
-   rule is "overdue until paid" — a passed due date stays overdue until the user
-   taps Mark paid (which advances paid_for to the next cycle). All derived live. */
+/* Upcoming — due-date countdowns for cards AND recurring reminders
+   (subscriptions/utilities), merged in one list sorted by urgency.
+   Cards: hybrid source — a current statement's parsed due_date + balance when
+   available, else a manually-set due day (card_cycles.json). Reminders:
+   standalone {id, name, due_day, paid_for} items in utilities.json.
+   Rollover rule is "overdue until paid" — a passed due date stays overdue until
+   the user taps Mark paid (which advances paid_for to the next cycle). The
+   Mark-paid button appears within ACT days of due; red styling within SOON. */
 (function () {
   'use strict';
   var listEl  = document.getElementById('cards-due');
   var titleEl = document.getElementById('cards-due-title');
+  var editBtn = document.getElementById('cd-edit-toggle');
   var SOON = 5;            // promote (red) when due within this many days
+  var ACT  = 14;           // Mark-paid button window; paid rows wake this early
   var DAY = 86400000;
 
   // ---- date helpers (local midnight, day-of-month occurrences) ----
@@ -184,17 +194,13 @@
   var TODAY = midnight(new Date());
   var cardsCache = [];      // [{last4, name}]
   var cyclesCache = {};     // {last4: {due_day, paid_for}}
+  var remsCache = [];       // [{id, name, due_day, paid_for}]
   var stmtByCard = {};      // {last4: {due_date, statement_total}}
-  var stateByCard = {};     // last computed state per last4 (for click handlers)
+  var stateByKey = {};      // last computed state per row key (for click handlers)
+  var editMode = false;
 
-  function computeState(card) {
-    var cy = cyclesCache[card.last4] || {};
-    var dueDay = (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null;
-    var paidFor = cy.paid_for || null;
-    var stmt = stmtByCard[card.last4] || null;
-    var s = { card: card, dueDay: dueDay };
-
-    // Statement override — only while the statement's due date is still unpaid.
+  // Shared cycle math for both kinds. stmt is card-only (statement override).
+  function fillCycle(s, dueDay, paidFor, stmt) {
     if (stmt && stmt.due_date && (!paidFor || stmt.due_date > paidFor)) {
       s.dueTarget = parseISO(stmt.due_date);
       s.amount = (stmt.statement_total != null) ? stmt.statement_total : null;
@@ -210,9 +216,10 @@
     s.days = Math.round((midnight(s.dueTarget) - TODAY) / DAY);
 
     // Paid display: the latest (or upcoming) bill is settled and the next one
-    // isn't imminent. Never when a statement says the current bill is unpaid.
+    // isn't within the actionable window. Never when a statement says the
+    // current bill is unpaid.
     var prevISO = dueDay ? isoOf(prevOnOrBefore(dueDay, TODAY)) : null;
-    var paidDisplay = !s.fromStatement && paidFor && prevISO && paidFor >= prevISO && s.days > SOON;
+    var paidDisplay = !s.fromStatement && paidFor && prevISO && paidFor >= prevISO && s.days > ACT;
 
     if (paidDisplay)        { s.kind = 'paid';     s.sortKey = 1e8 + s.days; }
     else if (s.days < 0)    { s.kind = 'overdue';  s.sortKey = s.days; }
@@ -221,86 +228,182 @@
     return s;
   }
 
+  function cardState(card) {
+    var cy = cyclesCache[card.last4] || {};
+    var dueDay = (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null;
+    var s = { type: 'card', key: card.last4, name: card.name || ('*' + card.last4),
+              emoji: '\uD83D\uDCB3', dueDay: dueDay };
+    return fillCycle(s, dueDay, cy.paid_for || null, stmtByCard[card.last4] || null);
+  }
+  function remState(rem) {
+    var dueDay = (rem.due_day != null && rem.due_day !== '') ? Number(rem.due_day) : null;
+    var s = { type: 'rem', key: String(rem.id), name: rem.name || '(unnamed)',
+              emoji: '\uD83D\uDD01', dueDay: dueDay };
+    return fillCycle(s, dueDay, rem.paid_for || null, null);
+  }
+
   function rowHtml(s) {
-    var c = s.card, name = Mock.escapeHtml(c.name || ('*' + c.last4));
+    var name = Mock.escapeHtml(s.name);
+    var attrs = ' data-type="' + s.type + '" data-key="' + Mock.escapeHtml(s.key) + '"';
+
+    if (editMode) {
+      var detail = s.dueDay ? 'day ' + s.dueDay + ' of each month'
+                            : (s.type === 'card' ? 'no due day set' : '');
+      var hint = s.type === 'card' ? 'clear due day' : 'remove';
+      return cardHtml('', s.emoji, name, '<div class="cd-sub">' + detail + '</div>',
+        (s.type === 'card' && !s.dueDay)
+          ? '<span class="cd-setlink" data-action="edit"' + attrs + '>Set due day \u203A</span>'
+          : '<button class="cd-remove" data-action="remove"' + attrs + ' aria-label="' + hint + '">\u2715</button>');
+    }
+
     if (s.kind === 'set') {
-      return cardHtml('', name, '<div class="cd-sub">no due day set</div>',
-        '<span class="cd-setlink" data-action="set" data-l4="' + c.last4 + '">Set due day ›</span>');
+      return cardHtml('', s.emoji, name, '<div class="cd-sub">no due day set</div>',
+        '<span class="cd-setlink" data-action="edit"' + attrs + '>Set due day \u203A</span>');
     }
     if (s.kind === 'paid') {
-      return cardHtml('cd-done', name, '<div class="cd-sub">next due ' + fmtDue(s.dueTarget) + '</div>',
-        '<span class="cd-status" data-action="undo" data-l4="' + c.last4 + '" title="tap to undo">✓ paid</span>');
+      return cardHtml('cd-done', s.emoji, name,
+        '<div class="cd-sub">next due ' + fmtDue(s.dueTarget) + '</div>',
+        '<span class="cd-status" data-action="undo"' + attrs + ' title="tap to undo">\u2713 paid</span>');
     }
-    var amt = (s.amount != null) ? '<span class="cd-amt">' + Mock.fmtBaht(s.amount) + '</span> · ' : '';
+    var amt = (s.amount != null) ? '<span class="cd-amt">' + Mock.fmtBaht(s.amount) + '</span> \u00B7 ' : '';
     var sub = '<div class="cd-sub">' + amt + 'due ' + fmtDue(s.dueTarget) +
-      ' <button class="cd-edit" data-action="edit" data-l4="' + c.last4 + '" aria-label="change due day">✎</button></div>';
+      ' <button class="cd-edit" data-action="edit"' + attrs + ' aria-label="edit">\u270E</button></div>';
     var count = s.days < 0 ? 'overdue by ' + (-s.days) + ' day' + (s.days === -1 ? '' : 's')
       : s.days === 0 ? 'due today'
       : s.days === 1 ? 'due tomorrow'
       : 'in ' + s.days + ' days';
     var right = '<span class="cd-count">' + count + '</span>' +
-      '<button class="cd-paid-btn" data-action="paid" data-l4="' + c.last4 + '">Mark paid</button>';
+      (s.days <= ACT ? '<button class="cd-paid-btn" data-action="paid"' + attrs + '>Mark paid</button>' : '');
     var cls = s.kind === 'overdue' ? 'cd-overdue' : s.kind === 'promoted' ? 'cd-promoted' : 'cd-calm';
-    return cardHtml(cls, name, sub, right);
+    return cardHtml(cls, s.emoji, name, sub, right);
   }
-  function cardHtml(cls, name, main, right) {
-    return '<div class="cd-card ' + cls + '"><span class="cd-emoji">💳</span>' +
+  function cardHtml(cls, emoji, name, main, right) {
+    return '<div class="cd-card ' + cls + '"><span class="cd-emoji">' + emoji + '</span>' +
       '<div class="cd-main"><div class="cd-name">' + name + '</div>' + main + '</div>' +
       '<div class="cd-right">' + right + '</div></div>';
   }
 
   function hide() { titleEl.style.display = 'none'; listEl.style.display = 'none'; }
   function render() {
-    if (!cardsCache.length) { hide(); return; }
-    var states = cardsCache.map(computeState).sort(function (a, b) { return a.sortKey - b.sortKey; });
-    stateByCard = {};
-    states.forEach(function (s) { stateByCard[s.card.last4] = s; });
+    if (!cardsCache.length && !remsCache.length) { hide(); return; }
+    var states = cardsCache.map(cardState).concat(remsCache.map(remState))
+      .sort(function (a, b) { return a.sortKey - b.sortKey; });
+    stateByKey = {};
+    states.forEach(function (s) { stateByKey[s.type + ':' + s.key] = s; });
     titleEl.style.display = ''; listEl.style.display = '';
-    listEl.innerHTML = states.map(rowHtml).join('');
+    editBtn.textContent = editMode ? 'Done' : 'Edit';
+    var html = states.map(rowHtml).join('');
+    if (editMode) {
+      html += '<button class="cd-add-row" data-action="add">\uFF0B Add reminder (subscription or utility)\u2026</button>';
+    }
+    listEl.innerHTML = html;
   }
 
   // ---- mutations (optimistic, revert on failure) ----
-  async function persist(l4, patch, prevCycle) {
-    try { await DataSource.saveCardCycle(l4, patch); }
-    catch (err) {
-      if (prevCycle === undefined) delete cyclesCache[l4]; else cyclesCache[l4] = prevCycle;
+  function fail(err, revert) {
+    revert();
+    render();
+    alert("Couldn't save that just now: " + (err && err.message ? err.message : err));
+  }
+  function persistCycle(l4, patch, prevCycle) {
+    DataSource.saveCardCycle(l4, patch).catch(function (err) {
+      fail(err, function () {
+        if (prevCycle === undefined) delete cyclesCache[l4]; else cyclesCache[l4] = prevCycle;
+      });
+    });
+  }
+  function persistRem(patch, prevRems) {
+    return DataSource.saveUtility(patch).then(function (items) {
+      remsCache = items; render();
+    }).catch(function (err) { fail(err, function () { remsCache = prevRems; }); });
+  }
+
+  function markPaid(type, key) {
+    var s = stateByKey[type + ':' + key]; if (!s || !s.dueTarget) return;
+    var iso = isoOf(midnight(s.dueTarget));
+    if (type === 'card') {
+      var prev = cyclesCache[key] ? Object.assign({}, cyclesCache[key]) : undefined;
+      cyclesCache[key] = Object.assign({}, cyclesCache[key], { paid_for: iso }); render();
+      persistCycle(key, { paid_for: iso }, prev);
+    } else {
+      var prevRems = remsCache;
+      remsCache = remsCache.map(function (u) {
+        return String(u.id) === key ? Object.assign({}, u, { paid_for: iso }) : u;
+      });
       render();
-      alert("Couldn't save that just now: " + (err && err.message ? err.message : err));
+      persistRem({ id: key, paid_for: iso }, prevRems);
     }
   }
-  function markPaid(l4) {
-    var s = stateByCard[l4]; if (!s || !s.dueTarget) return;
-    var iso = isoOf(midnight(s.dueTarget));
-    var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
-    cyclesCache[l4] = Object.assign({}, cyclesCache[l4], { paid_for: iso }); render();
-    persist(l4, { paid_for: iso }, prev);
+  function undoPaid(type, key) {
+    if (type === 'card') {
+      var prev = cyclesCache[key] ? Object.assign({}, cyclesCache[key]) : undefined;
+      var nc = Object.assign({}, cyclesCache[key]); delete nc.paid_for; cyclesCache[key] = nc; render();
+      persistCycle(key, { paid_for: null }, prev);
+    } else {
+      var prevRems = remsCache;
+      remsCache = remsCache.map(function (u) {
+        if (String(u.id) !== key) return u;
+        var nu = Object.assign({}, u); delete nu.paid_for; return nu;
+      });
+      render();
+      persistRem({ id: key, paid_for: null }, prevRems);
+    }
   }
-  function undoPaid(l4) {
-    var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
-    var nc = Object.assign({}, cyclesCache[l4]); delete nc.paid_for; cyclesCache[l4] = nc; render();
-    persist(l4, { paid_for: null }, prev);
+  function removeItem(type, key) {
+    if (type === 'card') {
+      // Clearing stops tracking only — the card stays in cards.json (OCR safe).
+      var prev = cyclesCache[key] ? Object.assign({}, cyclesCache[key]) : undefined;
+      delete cyclesCache[key]; render();
+      persistCycle(key, { due_day: null, paid_for: null }, prev);
+    } else {
+      var prevRems = remsCache;
+      remsCache = remsCache.filter(function (u) { return String(u.id) !== key; });
+      render();
+      DataSource.deleteUtility(key).then(function (items) {
+        remsCache = items; render();
+      }).catch(function (err) { fail(err, function () { remsCache = prevRems; }); });
+    }
   }
 
+  editBtn.addEventListener('click', function () { editMode = !editMode; render(); });
   listEl.addEventListener('click', function (e) {
     var t = e.target.closest('[data-action]'); if (!t) return;
-    var l4 = t.getAttribute('data-l4'), act = t.getAttribute('data-action');
-    if (act === 'paid') markPaid(l4);
-    else if (act === 'undo') undoPaid(l4);
-    else openSheet(l4);             // 'edit' or 'set'
+    var act = t.getAttribute('data-action');
+    if (act === 'add') { openSheet('rem', null); return; }
+    var type = t.getAttribute('data-type'), key = t.getAttribute('data-key');
+    if (act === 'paid') markPaid(type, key);
+    else if (act === 'undo') undoPaid(type, key);
+    else if (act === 'remove') removeItem(type, key);
+    else openSheet(type, key);      // 'edit'
   });
 
-  // ---- day-picker sheet ----
+  // ---- bottom sheet: card day-picker / reminder name+day ----
   var sheetBack = document.getElementById('cd-sheet-back');
   var grid = document.getElementById('cd-day-grid');
-  var editingL4 = null, pendingDay = null;
+  var nameInput = document.getElementById('cd-sheet-name');
+  var editing = null;               // {type, key} — key null = new reminder
+  var pendingDay = null;
 
-  function openSheet(l4) {
-    editingL4 = l4;
-    var cy = cyclesCache[l4] || {};
-    pendingDay = (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null;
-    var card = cardsCache.filter(function (c) { return c.last4 === l4; })[0];
-    document.getElementById('cd-sheet-title').textContent =
-      'When is ' + ((card && card.name) || ('*' + l4)) + ' due?';
+  function openSheet(type, key) {
+    editing = { type: type, key: key };
+    var title, hint;
+    if (type === 'card') {
+      var cy = cyclesCache[key] || {};
+      pendingDay = (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null;
+      var card = cardsCache.filter(function (c) { return c.last4 === key; })[0];
+      title = 'When is ' + ((card && card.name) || ('*' + key)) + ' due?';
+      hint = 'Pick the day of the month the payment is due.';
+      nameInput.style.display = 'none';
+    } else {
+      var rem = key ? remsCache.filter(function (u) { return String(u.id) === key; })[0] : null;
+      pendingDay = (rem && rem.due_day) ? Number(rem.due_day) : null;
+      nameInput.value = (rem && rem.name) || '';
+      title = rem ? 'Edit ' + rem.name : 'New reminder';
+      hint = 'What is it, and which day of the month is it due?';
+      nameInput.style.display = '';
+    }
+    document.getElementById('cd-sheet-title').textContent = title;
+    document.getElementById('cd-sheet-hint').textContent = hint;
     grid.innerHTML = '';
     for (var d = 1; d <= 28; d++) {
       var cell = document.createElement('div');
@@ -309,6 +412,7 @@
     }
     refreshSheet();
     sheetBack.classList.add('open');
+    if (type === 'rem' && !key) nameInput.focus();
   }
   function refreshSheet() {
     Array.prototype.forEach.call(grid.querySelectorAll('.day-cell'), function (cell) {
@@ -318,7 +422,7 @@
     if (pendingDay) {
       var due = firstOnOrAfter(pendingDay, TODAY);
       var days = Math.round((midnight(due) - TODAY) / DAY);
-      pv.textContent = 'Next due ' + fmtDue(due) + ' — ' + (days <= SOON ? '⚠ ' : '') +
+      pv.textContent = 'Next due ' + fmtDue(due) + ' \u2014 ' + (days <= SOON ? '\u26A0 ' : '') +
         (days === 0 ? 'due today' : 'in ' + days + ' day' + (days === 1 ? '' : 's')) + '.';
     } else { pv.textContent = 'Pick a day.'; }
   }
@@ -330,13 +434,22 @@
   document.getElementById('cd-sheet-cancel').addEventListener('click', closeSheet);
   sheetBack.addEventListener('click', function (e) { if (e.target === sheetBack) closeSheet(); });
   document.getElementById('cd-sheet-save').addEventListener('click', function () {
-    if (!editingL4 || !pendingDay) { closeSheet(); return; }
-    var l4 = editingL4, day = pendingDay;
-    var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
-    var nc = Object.assign({}, cyclesCache[l4]); nc.due_day = day; delete nc.paid_for;
-    cyclesCache[l4] = nc;
-    closeSheet(); render();
-    persist(l4, { due_day: day, paid_for: null }, prev);
+    if (!editing || !pendingDay) { closeSheet(); return; }
+    if (editing.type === 'card') {
+      var l4 = editing.key, day = pendingDay;
+      var prev = cyclesCache[l4] ? Object.assign({}, cyclesCache[l4]) : undefined;
+      var nc = Object.assign({}, cyclesCache[l4]); nc.due_day = day; delete nc.paid_for;
+      cyclesCache[l4] = nc;
+      closeSheet(); render();
+      persistCycle(l4, { due_day: day, paid_for: null }, prev);
+    } else {
+      var nm = nameInput.value.trim();
+      if (!nm) { nameInput.focus(); return; }
+      var patch = { name: nm, due_day: pendingDay, paid_for: null };
+      if (editing.key) patch.id = editing.key;
+      closeSheet();
+      persistRem(patch, remsCache);
+    }
   });
 
   // ---- load ----
@@ -344,9 +457,11 @@
     try {
       var cardsP = DataSource.loadCards().catch(function () { return []; });
       var cyclesP = DataSource.loadCardCycles().catch(function () { return {}; });
+      var remsP = DataSource.loadUtilities().catch(function () { return []; });
       var verP = DataSource.loadVerification().catch(function () { return { cards: [] }; });
       cardsCache = (await cardsP) || [];
       cyclesCache = (await cyclesP) || {};
+      remsCache = (await remsP) || [];
       var ver = await verP;
       var vcards = (ver && ver.cards) || [];
       stmtByCard = {};
