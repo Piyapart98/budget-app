@@ -95,7 +95,7 @@
       <label class="field-label">Field to edit</label>
       <select id="edit-field" onchange="onFieldChange()">
         <option value="">— select field —</option>
-        <option>Date</option><option>Description</option><option>Amount</option><option>Category</option><option>Card</option><option>Note</option>
+        <option>Date</option><option>Description</option><option>Amount</option><option>Category</option><option>Card</option><option>Note</option><option>Settle</option>
       </select>
     </div>
     <div class="field-group" id="old-val-wrap" style="display:none;">
@@ -138,7 +138,7 @@
 <script src="data-source.js"></script>
 <script>
 // Map UI field names <-> DB column names. The API expects DB column names.
-const FIELD_TO_DB={Date:'Date',Description:'Description',Amount:'Amount',Category:'Category',Card:'Card',Note:'Note'};
+const FIELD_TO_DB={Date:'Date',Description:'Description',Amount:'Amount',Category:'Category',Card:'Card',Note:'Note',Settle:'Settle'};
 
 // Option lists must match entry_form.html exactly so data stays consistent.
 const CATEGORY_OPTIONS=[
@@ -181,6 +181,7 @@ function rowToTx(r){
     category: r.Category || '',
     card:     r.Card || '',
     note:     r.Note || '',
+    settle:   String(r.Settle||'').toLowerCase()==='true'?'True':'',
     source:   (r.RefID||'').toLowerCase().startsWith('manual') ? 'manual' : 'slip',
     deleted:  String(r.Deleted||'').toLowerCase()==='true',
     edited:   String(r.Edited||'').toLowerCase()==='yes',
@@ -343,6 +344,13 @@ function buildEditControl(field,currentVal){
         ${opts}
       </select>`;
   }
+  if(field==='Settle'){
+    // Stored as "True"/"" — a two-option pick, no free text.
+    return `<select id="edit-new-val">
+        <option value="" ${currentVal!=='True'?'selected':''}>Not ticked</option>
+        <option value="True" ${currentVal==='True'?'selected':''}>Ticked (include in settlement)</option>
+      </select>`;
+  }
   if(field==='Note'){
     // Free text now (the card moved to its own field).
     return `<input type="text" id="edit-new-val" placeholder="note (optional)"
@@ -358,7 +366,7 @@ function onFieldChange(){
   const newWrap=document.getElementById('new-val-wrap');
   if(!field){oldWrap.style.display='none';newWrap.style.display='none';return;}
   const tx=transactions[activeIdx];
-  const raw={Date:tx.date,Description:tx.desc,Amount:tx.amount,Category:tx.category,Card:tx.card,Note:tx.note};
+  const raw={Date:tx.date,Description:tx.desc,Amount:tx.amount,Category:tx.category,Card:tx.card,Note:tx.note,Settle:tx.settle};
   const current=raw[field];
   // Show current value (display blank as the word "blank" for clarity).
   document.getElementById('old-val-display').textContent=(current===''||current==null)?'blank':current;
@@ -384,7 +392,7 @@ async function commitEdit(){
 
   let rawVal=inp.value;
   let newVal=typeof rawVal==='string'?rawVal.trim():String(rawVal);
-  const raw={Date:tx.date,Description:tx.desc,Amount:String(tx.amount||''),Category:tx.category||'',Card:tx.card||'',Note:tx.note||''};
+  const raw={Date:tx.date,Description:tx.desc,Amount:String(tx.amount||''),Category:tx.category||'',Card:tx.card||'',Note:tx.note||'',Settle:tx.settle||''};
   const oldVal=raw[field]||'';
 
   // Per-field validation.

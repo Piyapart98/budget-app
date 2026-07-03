@@ -54,6 +54,14 @@
   .done-title{font-size:20px;font-weight:500;margin-bottom:8px;}
   .done-sub{font-size:12px;color:var(--text-muted);font-family:var(--mono);margin-bottom:20px;line-height:1.7;}
   .btn-sm{padding:9px 20px;font-size:13px;width:auto;display:inline-block;}
+/* Settle tick — include this expense on the settlement page */
+.settle-row{display:flex;align-items:center;gap:10px;margin:0 0 14px;padding:12px 13px;
+            background:var(--bg);border:1px solid var(--border);border-radius:12px;}
+.settle-row input[type=checkbox]{width:20px;height:20px;accent-color:var(--green);flex:none;}
+.settle-lab{font-size:14px;color:var(--text);}
+.settle-sub{font-size:11px;color:var(--text-faint);margin-top:1px;}
+.settle-row.auto{border-color:var(--green-border);background:var(--green-bg);}
+.settle-row.auto .settle-sub{color:var(--green);}
 </style>
 <!-- card-split v1 (2026-06-14) -->
 </head>
@@ -113,6 +121,11 @@
       </optgroup>
     </select>
   </div>
+  <label class="settle-row" id="settle-wrap">
+    <input type="checkbox" id="f-settle">
+    <span><span class="settle-lab">Include in settlement</span>
+      <div class="settle-sub" id="settle-sub">will appear on the settlement page</div></span>
+  </label>
   <div class="err" id="form-err"></div>
   <button class="btn btn-primary" onclick="goReview()">Review entry →</button>
 </div>
@@ -125,6 +138,7 @@
     <div class="review-row"><span class="review-label">Category</span><span class="review-val" id="r-cat">—</span></div>
     <div class="review-row"><span class="review-label">Card</span><span class="review-val" id="r-card">—</span></div>
     <div class="review-row"><span class="review-label">Note</span><span class="review-val" id="r-note">—</span></div>
+    <div class="review-row"><span class="review-label">Settle</span><span class="review-val" id="r-settle">—</span></div>
     <div class="review-row"><span class="review-label">Source</span><span class="review-val" style="color:var(--amber);">manual</span></div>
   </div>
   <div class="notice">No slip attached. Row will be marked <strong>source: manual</strong> in database.csv.</div>
@@ -184,6 +198,27 @@ document.getElementById('f-card').addEventListener('change',async function(e){
     sel.value=name.trim();
   }catch(err){alert('Add card failed: '+(err&&err.message?err.message:err));sel.value='';}
 });
+// Settle tick: auto-follows the With Roong category; a manual toggle wins until
+// the category changes again.
+const ROONG_CAT='With Roong';
+let settleTouched=false;
+function refreshSettleRow(auto){
+  const wrap=document.getElementById('settle-wrap');
+  const sub=document.getElementById('settle-sub');
+  wrap.classList.toggle('auto',!!auto);
+  sub.textContent=auto?'auto-ticked — category is “With Roong”'
+                      :'will appear on the settlement page';
+}
+document.getElementById('f-cat').addEventListener('change',function(){
+  const isRoong=v('f-cat')===ROONG_CAT;
+  document.getElementById('f-settle').checked=isRoong;
+  settleTouched=false;
+  refreshSettleRow(isRoong);
+});
+document.getElementById('f-settle').addEventListener('change',function(){
+  settleTouched=true;
+  refreshSettleRow(false);
+});
 function show(id){['form-view','review-view','done-view'].forEach(x=>document.getElementById(x).className='view');document.getElementById(id).className='view active';}
 function showErr(id,msg){const e=document.getElementById(id);e.textContent=msg;e.style.display='block';}
 function hideErr(id){document.getElementById(id).style.display='none';}
@@ -207,6 +242,8 @@ function goReview(){
   document.getElementById('r-cat').textContent=v('f-cat')||'blank';
   document.getElementById('r-card').textContent=v('f-card')||'None';
   document.getElementById('r-note').textContent=v('f-note')||'blank';
+  document.getElementById('r-settle').textContent=
+    document.getElementById('f-settle').checked?'Yes':'No';
   show('review-view');
 }
 
@@ -227,6 +264,7 @@ async function doCommit(){
     Category:    v('f-cat'),
     Card:        v('f-card')==='__add__'?'':v('f-card'),
     Note:        v('f-note'),
+    Settle:      document.getElementById('f-settle').checked?'True':'',
   };
 
   try{
@@ -250,6 +288,9 @@ function doReset(){
   ['f-desc','f-amount'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('f-cat').value='';
   document.getElementById('f-note').value='';
+  document.getElementById('f-settle').checked=false;
+  settleTouched=false;
+  refreshSettleRow(false);
   hideErr('form-err');
   hideErr('review-err');
   const btn=document.getElementById('btn-commit');

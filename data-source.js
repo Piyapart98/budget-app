@@ -52,7 +52,9 @@
   var DB_COLUMNS = ['Date', 'Description', 'Amount', 'Category', 'Note',
                     'RefID', 'ReviewedAt', 'Edited', 'Deleted',
                     'settlement_id', 'roong_share',
-                    'Card'];   // trailing → old 11-col rows read Card as ''
+                    'Card',    // trailing → old 11-col rows read Card as ''
+                    'Settle']; // "True"/"" — on the settlement page even when
+                               // Category isn't With Roong; trailing for compat
   var CHANGELOG_COLUMNS = ['Timestamp', 'RefID', 'Action', 'Field',
                            'OldValue', 'NewValue', 'Reason'];
   var ROONG_SETTLEMENT_COLUMNS = [
@@ -61,6 +63,11 @@
   ];
   var ROONG_CATEGORY = 'With Roong';
   var ROONG_SETTLEMENTS_PATH = 'roong_settlements.csv';
+
+  // Normalize any settle value to the stored form: 'True' or ''.
+  function settleFlag(v) {
+    return String(v == null ? '' : v).trim().toLowerCase() === 'true' ? 'True' : '';
+  }
 
   // -------------------------------------------------------------------------
   // Token management (GitHub mode only)
@@ -708,6 +715,7 @@
         Edited:      'No',
         Deleted:     'False',
         Card:        String(payload.Card || '').trim(),
+        Settle:      settleFlag(payload.Settle),
       });
       return rows;
     }, 'entry from phone: ' + (payload.Description || '') + ' ' + (payload.Amount || ''),
@@ -832,12 +840,22 @@
     return settlements;
   }
 
+  // Unsettled rows for the settlement page: the With Roong category PLUS any row
+  // ticked "Include in settlement" (Settle=True). Flagged rows are tagged
+  // _flagged so the page can render them in their own section. Sorted With Roong
+  // first, then flagged, date ascending within each group.
   async function loadRoongUnsettled() {
     var db = await loadDatabase();
     return db.filter(function (r) {
-      return r.Category === ROONG_CATEGORY &&
+      return (r.Category === ROONG_CATEGORY ||
+              String(r.Settle || '').toLowerCase() === 'true') &&
              !(r.settlement_id || '').trim() &&
              String(r.Deleted || '').toLowerCase() !== 'true';
+    }).map(function (r) {
+      return Object.assign(r, { _flagged: r.Category !== ROONG_CATEGORY });
+    }).sort(function (a, b) {
+      if (a._flagged !== b._flagged) return a._flagged ? 1 : -1;
+      return String(a.Date || '').localeCompare(String(b.Date || ''));
     });
   }
 
@@ -1204,6 +1222,7 @@
         Edited:      'No',
         Deleted:     'False',
         Card:        String(fields.Card || '').trim(),
+        Settle:      settleFlag(fields.Settle),
       };
     });
     var addedCount = newRows.length;

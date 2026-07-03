@@ -128,6 +128,10 @@
   .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#33302a;color:#fff;font-size:12px;
     padding:8px 14px;border-radius:10px;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center;}
   .toast.show{opacity:1;}
+  /* Category badge on flagged (Settle-ticked, non-With-Roong) rows */
+  .flag-badge{display:inline-block;font-size:10px;font-weight:700;color:var(--amber-text);
+              background:var(--amber-bg);border:1px solid var(--amber-border);
+              border-radius:999px;padding:2px 8px;margin-left:6px;vertical-align:1px;}
 </style>
 </head>
 <body>
@@ -198,10 +202,15 @@ function showToast(msg, ms = 2500) {
   toastTimer = setTimeout(() => el.classList.remove('show'), ms);
 }
 
+// With Roong rows first, then flagged (Settle-ticked, other-category) rows —
+// matching the page's two sections; date ascending within each group.
 function mapUnsettled(rows) {
   return rows
     .map(r => ({...r, _pct: 50, _share: parseFloat(r.Amount || 0) * 0.5, _checked: true}))
-    .sort((a, b) => (a.Date || '') < (b.Date || '') ? -1 : (a.Date || '') > (b.Date || '') ? 1 : 0);
+    .sort((a, b) => {
+      if (!!a._flagged !== !!b._flagged) return a._flagged ? 1 : -1;
+      return (a.Date || '') < (b.Date || '') ? -1 : (a.Date || '') > (b.Date || '') ? 1 : 0;
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -263,8 +272,33 @@ function render() {
     </div>`;
   }
 
-  // --- Section 1: Unsettled ---
-  html += `<div class="section-title">Unsettled (${unsettled.length})</div>`;
+  // --- Section 1 (With Roong category) + Section 1b (other flagged rows) ---
+  // One shared `unsettled` array (indices drive checkboxes/shares/sendRequest);
+  // render splits it into the two sections. mapUnsettled sorted With Roong
+  // rows first, so each section is a contiguous slice.
+  const roongCount = unsettled.filter(r => !r._flagged).length;
+  const flaggedCount = unsettled.length - roongCount;
+
+  const rowHtml = (r, i) => `
+      <div class="card roong-row${r._checked ? '' : ' unchecked'}" id="row-${i}">
+        <input type="checkbox" data-idx="${i}" ${r._checked ? 'checked' : ''}>
+        <div class="rr-body">
+          <div class="rr-top">
+            <div class="rr-desc">${escHtml(r.Description || '')}${r._flagged ? `<span class="flag-badge">${escHtml(r.Category || '')}</span>` : ''}</div>
+            <div class="rr-total">${fmtBaht(parseFloat(r.Amount || 0))}</div>
+          </div>
+          <div class="rr-meta">${fmtDateShort(r.Date)} · ${escHtml(r.Note||'')||'—'} · ${escHtml(r.RefID||'')}</div>
+          ${r._checked ? `
+          <div class="share-inputs">
+            <input type="number" min="0" max="100" step="1" value="${r._pct.toFixed(0)}" data-idx="${i}" data-type="pct" placeholder="%">
+            <span class="share-sep">%  =</span>
+            <input type="number" min="0" step="0.5" value="${r._share.toFixed(2)}" data-idx="${i}" data-type="baht" placeholder="฿">
+          </div>
+          <div class="share-preview" id="preview-${i}">Roong pays ${fmtBaht(r._share)}</div>` : ''}
+        </div>
+      </div>`;
+
+  html += `<div class="section-title">With Roong (${roongCount})</div>`;
 
   if (unsettled.length === 0) {
     html += `<div class="card"><div class="empty">No unsettled “With Roong” expenses</div></div>`;
@@ -276,29 +310,17 @@ function render() {
       <input type="checkbox" id="select-all-cb" ${allChecked ? 'checked' : ''} ${!allChecked && someChecked ? 'data-indeterminate="true"' : ''}>
       <span class="select-all-label">Select all (${unsettled.length})</span>
     </label>`;
-    for (let i = 0; i < unsettled.length; i++) {
-      const r = unsettled[i];
-      const desc = r.Description || '';
-      const amount = parseFloat(r.Amount || 0);
-      const shareStr = fmtBaht(r._share);
-      html += `
-      <div class="card roong-row${r._checked ? '' : ' unchecked'}" id="row-${i}">
-        <input type="checkbox" data-idx="${i}" ${r._checked ? 'checked' : ''}>
-        <div class="rr-body">
-          <div class="rr-top">
-            <div class="rr-desc">${escHtml(desc)}</div>
-            <div class="rr-total">${fmtBaht(amount)}</div>
-          </div>
-          <div class="rr-meta">${fmtDateShort(r.Date)} · ${escHtml(r.Note||'')||'—'} · ${escHtml(r.RefID||'')}</div>
-          ${r._checked ? `
-          <div class="share-inputs">
-            <input type="number" min="0" max="100" step="1" value="${r._pct.toFixed(0)}" data-idx="${i}" data-type="pct" placeholder="%">
-            <span class="share-sep">%  =</span>
-            <input type="number" min="0" step="0.5" value="${r._share.toFixed(2)}" data-idx="${i}" data-type="baht" placeholder="฿">
-          </div>
-          <div class="share-preview" id="preview-${i}">Roong pays ${shareStr}</div>` : ''}
-        </div>
-      </div>`;
+    if (roongCount === 0) {
+      html += `<div class="card"><div class="empty">No unsettled “With Roong” expenses</div></div>`;
+    }
+    unsettled.forEach((r, i) => { if (!r._flagged) html += rowHtml(r, i); });
+
+    // Ticked "Include in settlement" rows from any other category. Hidden when
+    // empty. After a request they carry settlement_id and drop out of the
+    // loader; cancelling a request returns them here automatically.
+    if (flaggedCount > 0) {
+      html += `<div class="section-title">Other flagged expenses (${flaggedCount})</div>`;
+      unsettled.forEach((r, i) => { if (r._flagged) html += rowHtml(r, i); });
     }
   }
 
