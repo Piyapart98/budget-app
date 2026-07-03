@@ -143,7 +143,8 @@ const FIELD_TO_DB={Date:'Date',Description:'Description',Amount:'Amount',Categor
 // Option lists must match entry_form.html exactly so data stays consistent.
 const CATEGORY_OPTIONS=[
   {group:'Spending',items:['Food','Drinks and Snacks','Transport','Health / Necessaries','Shopping','Groceries','Utilities and Subs','Sports','Social Expenses / Donation','With Roong','To Mom','Other']},
-  {group:'Income / Savings',items:['Salary','Bonus','Reimbursement','Payback from someone','Provident Fund','Mutual Fund','Coop Account','Saving for EOY Tax Deduction','Interest payment']},
+  {group:'Income',items:['Salary','Bonus','Reimbursement','Payback from someone','Interest payment']},
+  {group:'Saving',items:['Provident Fund','Mutual Fund','Coop Account','Saving for EOY Tax Deduction']},
 ];
 // Card options come from DataSource.loadCards() — see loadCardOptions() below.
 // Card last-4s live in slip_extractor.CARD_BY_LAST4 — single source of truth.

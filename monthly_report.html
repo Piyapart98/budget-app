@@ -44,6 +44,7 @@
   .tile .t-label{font-size:10px;color:var(--text-faint);}
   .tile .t-val{font-size:16px;font-weight:700;}
   .tile .t-val.green{color:var(--green);}
+  .tile .t-val.blue{color:#1a5b8a;}
 
   /* Part 1 — share-of-total bar + aligned legend */
   .sharebar{display:flex;width:100%;height:42px;border-radius:8px;overflow:hidden;margin:2px 0 14px;}
@@ -152,7 +153,7 @@
   <div class="tiles">
     <div class="tile"><div class="t-label">Spent</div><div class="t-val" id="t-spent">—</div></div>
     <div class="tile"><div class="t-label">Income</div><div class="t-val green" id="t-income">—</div></div>
-    <div class="tile"><div class="t-label">Saved</div><div class="t-val green" id="t-saved">—</div></div>
+    <div class="tile"><div class="t-label">Saving</div><div class="t-val blue" id="t-saving">—</div></div>
   </div>
 
   <div class="section-title">What you spent on</div>
@@ -188,6 +189,9 @@
 
   <div class="section-title">Income</div>
   <div id="income"></div>
+
+  <div class="section-title">Saving</div>
+  <div id="saving"></div>
 
   <div class="section-title wiw-head"><span>Where it went</span>
     <span class="set-goal-link" id="set-goal">set goal</span></div>
@@ -240,7 +244,9 @@
   var HM_SHADES = ['#efe9dd','#f7dca6','#f0b95e','#e89a2c','#c9760f'];
   var ROONG = 'With Roong';
 
-  var rows = null, isIncome = null, goals = null;
+  var SAVING_BLUE = '#1a5b8a';    // matches the Saving tile
+
+  var rows = null, isIncome = null, isSaving = null, goals = null;
   var settledSet = {}, pendingSet = {};   // settlement_id -> true
   var cur = new Date(); cur.setDate(1);
 
@@ -248,16 +254,21 @@
   function label(d) { return d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }); }
   function shiftMonth(d, n) { var x = new Date(d); x.setMonth(x.getMonth() + n); return x; }
 
+  // Saving wins over income when a stale config lists a category as both.
+  function isIncomeOnly(c) { return !isSaving(c) && isIncome(c); }
+
   function totalsFor(mk) {
-    var spent = 0, income = 0, byCat = {};
+    var spent = 0, income = 0, saving = 0, byCat = {};
     rows.forEach(function (r) {
       if (Mock.isDeleted(r) || Mock.monthKey(r.Date) !== mk) return;
       var amt = parseFloat(r.Amount) || 0;
-      if (isIncome(r.Category)) income += amt;
+      // Saving before income: a stale config may list saving cats as income.
+      if (isSaving(r.Category)) saving += amt;
+      else if (isIncome(r.Category)) income += amt;
       else { spent += amt; var c = (r.Category || 'Other').trim() || 'Other';
              byCat[c] = (byCat[c] || 0) + amt; }
     });
-    return { spent: spent, income: income, byCat: byCat };
+    return { spent: spent, income: income, saving: saving, byCat: byCat };
   }
 
   // ---- Part 4 helper: settlement status tag for a "With Roong" row ----
@@ -298,13 +309,13 @@
     // ---- Tiles ----
     document.getElementById('t-spent').textContent = Mock.fmtBaht(t.spent);
     document.getElementById('t-income').textContent = Mock.fmtBaht(t.income);
-    document.getElementById('t-saved').textContent =
-      t.income > 0 ? Math.max(0, Math.round((t.income - t.spent) / t.income * 100)) + '%' : '—';
+    document.getElementById('t-saving').textContent = Mock.fmtBaht(t.saving);
 
     renderShare(t, ranked);
     renderTrend();
     renderHeatmap();
-    renderIncome(t);
+    renderInflow('income', '💰', 'Income', isIncomeOnly, t.income, INCOME_GREEN, 'No income this month');
+    renderInflow('saving', '🏦', 'Saving', isSaving, t.saving, SAVING_BLUE, 'No saving this month');
     renderWhereItWent(t, ranked);
   }
 
@@ -426,7 +437,7 @@
     function dkey(d) { return d.toISOString().slice(0, 10); }
     var daily = {};
     rows.forEach(function (r) {
-      if (Mock.isDeleted(r) || isIncome(r.Category)) return;
+      if (Mock.isDeleted(r) || isIncome(r.Category) || isSaving(r.Category)) return;
       var ds = String(r.Date || '').slice(0, 10);
       daily[ds] = (daily[ds] || 0) + (parseFloat(r.Amount) || 0);
     });
@@ -487,12 +498,12 @@
     } else { stat.textContent = 'No spending in this window.'; }
   }
 
-  // ---- Income: one green expandable row listing the month's income entries ----
-  function renderIncome(t) {
-    var wrap = document.getElementById('income');
+  // ---- Income / Saving: one expandable row each listing the month's entries ----
+  function renderInflow(elId, emoji, name, tester, total, color, emptyMsg) {
+    var wrap = document.getElementById(elId);
     var mk = key(cur);
     var entries = rows.filter(function (r) {
-      return !Mock.isDeleted(r) && Mock.monthKey(r.Date) === mk && isIncome(r.Category);
+      return !Mock.isDeleted(r) && Mock.monthKey(r.Date) === mk && tester(r.Category);
     }).sort(function (a, b) { return String(a.Date) < String(b.Date) ? -1 : 1; });
 
     var entriesHtml = entries.length ? entries.map(function (r) {
@@ -503,16 +514,16 @@
       return '<div class="entry"><span class="ed">' + ds + '</span>' +
         '<span class="en">' + Mock.escapeHtml(desc) + '</span>' +
         '<span class="ea">' + Mock.fmtBaht(r.Amount) + '</span></div>';
-    }).join('') : '<div class="entry empty">No income this month</div>';
+    }).join('') : '<div class="entry empty">' + emptyMsg + '</div>';
 
     var row = document.createElement('div');
     row.className = 'cat-row';
     row.innerHTML =
-      '<div class="cat-head"><span class="cat-name">💰 <span class="nm">Income</span></span>' +
-      '<span class="cat-right" style="color:' + INCOME_GREEN + '">' + Mock.fmtBaht(t.income) +
+      '<div class="cat-head"><span class="cat-name">' + emoji + ' <span class="nm">' + name + '</span></span>' +
+      '<span class="cat-right" style="color:' + color + '">' + Mock.fmtBaht(total) +
       ' <span class="chev">▶</span></span></div>' +
       '<div class="cat-track"><div class="cat-fill" style="width:100%;background:' +
-      INCOME_GREEN + '"></div></div>' +
+      color + '"></div></div>' +
       '<div class="entries">' + entriesHtml + '</div>';
     row.addEventListener('click', function () { row.classList.toggle('open'); });
     wrap.innerHTML = '';
@@ -637,7 +648,7 @@
   }
   function buildGoalsModal() {
     var cats = (goals && goals.categories) ? goals.categories : {};
-    var entries = Object.keys(cats).filter(function (c) { return !isIncome(c); })
+    var entries = Object.keys(cats).filter(function (c) { return !isIncome(c) && !isSaving(c); })
       .map(function (c) { return [c, cats[c]]; });
     document.getElementById('gmodal-rows').innerHTML = entries.length ? entries.map(function (e) {
       return '<div class="gmrow"><span class="gnm">' + Mock.catEmoji(e[0]) + ' ' +
@@ -697,7 +708,9 @@
       }).catch(function () {});
 
       rows = await DataSource.loadDatabase();
-      isIncome = Mock.incomeTester(await cfgP);
+      var cfg = await cfgP;
+      isIncome = Mock.incomeTester(cfg);
+      isSaving = Mock.savingTester(cfg);
       goals = await goalsP;
       await roongP;
       render();

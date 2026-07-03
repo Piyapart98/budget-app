@@ -56,17 +56,25 @@
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
   }
 
-  // Build an income-category test from config, falling back to the hardcoded
-  // list (mirrors monthly_report.html's fallback behavior).
+  // Build income-/saving-category tests from config, falling back to the
+  // hardcoded lists. Note: a stale config may still list saving categories
+  // under income_categories, so callers that split buckets must test saving
+  // BEFORE income — those rows then land in Saving either way.
   var FALLBACK_INCOME = ['Salary','Bonus','Reimbursement','Payback from someone',
-    'Provident Fund','Mutual Fund','Coop Account','Saving for EOY Tax Deduction',
     'Interest payment'];
-  function incomeTester(cfg) {
-    var list = (cfg && Array.isArray(cfg.income_categories) && cfg.income_categories.length)
-      ? cfg.income_categories : FALLBACK_INCOME;
+  var FALLBACK_SAVING = ['Provident Fund','Mutual Fund','Coop Account',
+    'Saving for EOY Tax Deduction'];
+  function catTester(list, fallback) {
     var set = {};
-    list.forEach(function (c) { set[String(c).trim()] = true; });
+    (Array.isArray(list) && list.length ? list : fallback)
+      .forEach(function (c) { set[String(c).trim()] = true; });
     return function (cat) { return !!set[String(cat || '').trim()]; };
+  }
+  function incomeTester(cfg) {
+    return catTester(cfg && cfg.income_categories, FALLBACK_INCOME);
+  }
+  function savingTester(cfg) {
+    return catTester(cfg && cfg.saving_categories, FALLBACK_SAVING);
   }
 
   // Replace a section's content with a soft inline failure note.
@@ -83,6 +91,7 @@
   window.Mock = {
     greeting: greeting, dateline: dateline, catEmoji: catEmoji, fmtBaht: fmtBaht,
     isDeleted: isDeleted, monthKey: monthKey, thisMonthKey: thisMonthKey,
-    incomeTester: incomeTester, softFail: softFail, escapeHtml: escapeHtml,
+    incomeTester: incomeTester, savingTester: savingTester,
+    softFail: softFail, escapeHtml: escapeHtml,
   };
 })();

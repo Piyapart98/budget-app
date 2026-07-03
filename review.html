@@ -145,18 +145,20 @@
 // writes until Submit. local → POST /api/review/submit; github → database.csv repo writes.
 (function () {
   'use strict';
-  // Must match review.html CAT_GROUPS (both Spending and Income/Savings shown).
+  // Must match entry_form.html's optgroups (Spending / Income / Saving).
   var CAT_GROUPS = [
     { group: 'Spending', items: ['Food','Drinks and Snacks','Transport','Health / Necessaries',
         'Shopping','Groceries','Utilities and Subs','Sports','Social Expenses / Donation',
         'With Roong','To Mom','Other'] },
-    { group: 'Income / Savings', items: ['Salary','Bonus','Reimbursement','Payback from someone',
-        'Provident Fund','Mutual Fund','Coop Account','Saving for EOY Tax Deduction',
+    { group: 'Income', items: ['Salary','Bonus','Reimbursement','Payback from someone',
         'Interest payment'] },
+    { group: 'Saving', items: ['Provident Fund','Mutual Fund','Coop Account',
+        'Saving for EOY Tax Deduction'] },
   ];
-  // Income/Savings categories are inflows → "+" in the submit feed; spending → "−".
+  // Income and Saving categories are inflows → "+" in the submit feed; spending → "−".
   var INCOME_CATS = {};
-  CAT_GROUPS[1].items.forEach(function (c) { INCOME_CATS[c] = true; });
+  CAT_GROUPS[1].items.concat(CAT_GROUPS[2].items)
+    .forEach(function (c) { INCOME_CATS[c] = true; });
   function isIncomeCat(c) { return !!INCOME_CATS[(c || '').trim()]; }
 
   var slips = [], cursor = 0, decisions = [], curSrc = null;

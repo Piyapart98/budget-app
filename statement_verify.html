@@ -235,12 +235,12 @@ var IS_GH = !!(window.DataSource && window.DataSource.isGithub());
 // ---------------------------------------------------------------------------
 async function boot() {
   try {
-    // Load goals for category list + income filter
+    // Load goals for category list + non-spending (income + saving) filter
     var goals = await DataSource.loadGoals();
     INCOME_CATS = [];
     try {
       var cfg = await DataSource.loadConfig();
-      INCOME_CATS = cfg.income_categories || [];
+      INCOME_CATS = (cfg.income_categories || []).concat(cfg.saving_categories || []);
     } catch (e) { /* ignore */ }
     var allCats = goals.categories ? Object.keys(goals.categories) : [];
     CATS = allCats.filter(function (c) { return INCOME_CATS.indexOf(c) === -1; });

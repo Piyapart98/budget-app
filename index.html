@@ -58,14 +58,16 @@
       var goalsP = DataSource.loadGoals().catch(function () { return {}; });
       var rows = await DataSource.loadDatabase();
       var cfg = await cfgP, goals = await goalsP;
-      var isIncome = Mock.incomeTester(cfg);
+      var isIncome = Mock.incomeTester(cfg), isSaving = Mock.savingTester(cfg);
+      // Income or saving: excluded from spent, shown "+" in the feed.
+      var isInflow = function (c) { return isIncome(c) || isSaving(c); };
       var live = rows.filter(function (r) { return !Mock.isDeleted(r); });
 
       // This month's spending
       var mk = Mock.thisMonthKey();
       var spent = 0;
       live.forEach(function (r) {
-        if (Mock.monthKey(r.Date) === mk && !isIncome(r.Category)) {
+        if (Mock.monthKey(r.Date) === mk && !isInflow(r.Category)) {
           spent += parseFloat(r.Amount) || 0;
         }
       });
@@ -93,7 +95,7 @@
         Mock.softFail(feed, 'No transactions yet this month.');
       } else {
         feed.innerHTML = recent.map(function (r) {
-          var inc = isIncome(r.Category);
+          var inc = isInflow(r.Category);
           // Description is the real label now (Note is free text, often blank).
           var label = r.Description || r.Note || r.Category || '—';
           return '<div class="feed-row">' +
