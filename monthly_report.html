@@ -271,7 +271,8 @@
     return { spent: spent, income: income, saving: saving, byCat: byCat };
   }
 
-  // ---- Part 4 helper: settlement status tag for a "With Roong" row ----
+  // ---- Part 4 helper: settlement status tag for a "With Roong" or
+  //      settle-ticked row ----
   function roongTag(r) {
     var sid = String(r.settlement_id || '').trim();
     if (sid && settledSet[sid]) return { cls: 'settled', text: '✓ Settled' };
@@ -552,7 +553,10 @@
           d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
         var desc = (r.Description || r.Note || '').trim() || '(no description)';
         var tag = '';
-        if (cat === ROONG) { var tg = roongTag(r);
+        // With Roong rows and settle-ticked rows (any category) get the same
+        // settlement-status tag.
+        if (cat === ROONG || String(r.Settle || '').toLowerCase() === 'true') {
+          var tg = roongTag(r);
           tag = ' <span class="settle-tag ' + tg.cls + '">' + tg.text + '</span>'; }
         return '<div class="entry"><span class="ed">' + ds + '</span>' +
           '<span class="en">' + Mock.escapeHtml(desc) + tag + '</span>' +
