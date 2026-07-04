@@ -197,12 +197,12 @@ async function apiJson(url,opts){
 
 function showLoading(targetId,msg){
   document.getElementById(targetId).innerHTML=
-    `<div class="cl-empty">${msg}</div>`;
+    `<div class="cl-empty">${escapeHtmlMini(msg)}</div>`;
 }
 
 function showError(targetId,msg){
   document.getElementById(targetId).innerHTML=
-    `<div class="cl-empty" style="color:var(--red);">${msg}</div>`;
+    `<div class="cl-empty" style="color:var(--red);">${escapeHtmlMini(msg)}</div>`;
 }
 
 // --- Loaders ---------------------------------------------------------------
@@ -253,8 +253,8 @@ function renderTx(){
       <div class="tx-header">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;">
           <div>
-            <div class="tx-desc">${tx.desc||'—'}</div>
-            <div class="tx-meta">${tx.ref} · ${tx.date} · ${tx.category||'no category'}${tx.card?' · '+escapeHtmlMini(tx.card):''} · ${tx.note||'—'}</div>
+            <div class="tx-desc">${escapeHtmlMini(tx.desc)||'—'}</div>
+            <div class="tx-meta">${escapeHtmlMini(tx.ref)} · ${escapeHtmlMini(tx.date)} · ${escapeHtmlMini(tx.category)||'no category'}${tx.card?' · '+escapeHtmlMini(tx.card):''} · ${escapeHtmlMini(tx.note)||'—'}</div>
             <div class="badges">
               ${tx.deleted?'<span class="badge badge-deleted">deleted</span>':''}
               ${tx.edited&&!tx.deleted?'<span class="badge badge-edited">edited</span>':''}
@@ -281,13 +281,13 @@ function renderCl(){
   list.innerHTML=[...changelog].reverse().map(cl=>`
     <div class="cl-row">
       <div class="cl-top">
-        <span class="cl-ref">${cl.ref} · ${cl.ts}</span>
-        <span class="badge ${cl.action==='edit'?'badge-edited':'badge-deleted'}">${cl.action}</span>
+        <span class="cl-ref">${escapeHtmlMini(cl.ref)} · ${escapeHtmlMini(cl.ts)}</span>
+        <span class="badge ${cl.action==='edit'?'badge-edited':'badge-deleted'}">${escapeHtmlMini(cl.action)}</span>
       </div>
       ${cl.action==='edit'
-        ?`<div class="cl-field"><span class="cl-old">${cl.field}: ${cl.old||'blank'}</span>→ ${cl.new||'blank'}</div>`
+        ?`<div class="cl-field"><span class="cl-old">${escapeHtmlMini(cl.field)}: ${escapeHtmlMini(cl.old)||'blank'}</span>→ ${escapeHtmlMini(cl.new)||'blank'}</div>`
         :`<div class="cl-field" style="color:var(--red);">Row removed from reports</div>`}
-      <div class="cl-reason">↳ ${cl.reason}</div>
+      <div class="cl-reason">↳ ${escapeHtmlMini(cl.reason)}</div>
     </div>`).join('');
 }
 
@@ -326,9 +326,9 @@ function buildEditControl(field,currentVal){
   if(field==='Category'){
     const groups=CATEGORY_OPTIONS.map(g=>{
       const opts=g.items.map(it=>
-        `<option ${it===currentVal?'selected':''}>${it}</option>`
+        `<option ${it===currentVal?'selected':''}>${escapeHtmlMini(it)}</option>`
       ).join('');
-      return `<optgroup label="${g.group}">${opts}</optgroup>`;
+      return `<optgroup label="${escapeHtmlMini(g.group)}">${opts}</optgroup>`;
     }).join('');
     return `<select id="edit-new-val">
         <option value="" ${!currentVal?'selected':''}>— leave blank —</option>

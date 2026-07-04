@@ -28,6 +28,30 @@
   var IS_GITHUB = /\.github\.io$/i.test(window.location.hostname);
   var MODE = IS_GITHUB ? 'github' : 'local';
 
+  // LOCAL mode: the Flask backend gates its data/image endpoints with a
+  // per-machine access key (printed in the terminal, embedded as ?key= in the
+  // URL it prints). Persist it as a SameSite=Strict cookie so it rides every
+  // same-origin request — fetch() and <img> slip loads alike — but is never sent
+  // cross-site, closing both the open-LAN and the CSRF gaps. Provision from
+  // ?key= on any page; otherwise prompt once (paste the key from the terminal).
+  (function provisionLocalKey() {
+    if (MODE !== 'local') return;
+    var m = /[?&]key=([^&]+)/.exec(window.location.search);
+    if (m) {
+      document.cookie = 'budget_key=' + m[1] + '; path=/; max-age=31536000; SameSite=Strict';
+      try { history.replaceState(null, '', window.location.pathname + window.location.hash); } catch (e) {}
+      return;
+    }
+    if (!/(?:^|;\s*)budget_key=/.test(document.cookie)) {
+      var k = window.prompt(
+        'Budget server access key\n\n' +
+        'Paste the key shown in the terminal next to the phone URL (the part after ?key=).');
+      if (k && k.trim()) {
+        document.cookie = 'budget_key=' + k.trim() + '; path=/; max-age=31536000; SameSite=Strict';
+      }
+    }
+  })();
+
   // Where the private data repo lives. If you ever fork this for someone
   // else's GitHub account, change these two strings and the same code keeps
   // working.
@@ -688,7 +712,15 @@
     return data;
   }
 
+  // Amount must be a non-negative number — mirrors the Flask /api/entry + /api/edit
+  // guard so a GitHub-mode write can't store "abc" and NaN every report total.
+  function assertAmount(v) {
+    var n = Number(String(v == null ? '' : v).trim());
+    if (!isFinite(n) || n < 0) throw new Error('Amount must be a non-negative number.');
+  }
+
   async function submitEntry(payload) {
+    assertAmount(payload.Amount);
     if (MODE === 'local') {
       var res = await fetch('/api/entry', {
         method: 'POST',
@@ -729,6 +761,7 @@
   }
 
   async function submitEdit(payload) {
+    if (payload.Field === 'Amount') assertAmount(payload.NewValue);
     if (MODE === 'local') {
       var res = await fetch('/api/edit', {
         method: 'POST',
