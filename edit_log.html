@@ -50,6 +50,10 @@
   .cl-old{text-decoration:line-through;color:var(--text-faint);margin-right:4px;}
   .cl-reason{font-size:12px;color:var(--text-muted);font-family:var(--mono);}
   .cl-empty{font-size:13px;color:var(--text-faint);text-align:center;padding:30px 0;}
+  .filter-bar{display:flex;flex-direction:column;gap:8px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:12px;}
+  .filter-bar input,.filter-bar select{font-size:13px;padding:8px 10px;}
+  .filter-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .filter-clear{align-self:flex-end;width:auto;font-size:11px;font-family:var(--mono);color:var(--text-muted);background:transparent;border:none;cursor:pointer;padding:2px 4px;text-decoration:underline;}
   .overlay{position:fixed;inset:0;background:rgba(26,25,23,0.5);display:flex;align-items:flex-end;z-index:200;}
   .overlay.hidden{display:none;}
   .modal{background:var(--surface);border-radius:16px 16px 0 0;padding:20px 16px;width:100%;max-height:90vh;overflow-y:auto;}
@@ -84,8 +88,53 @@
   </div>
 </header>
 
-<div id="view-rows" class="view active"><div id="tx-list"></div></div>
-<div id="view-log" class="view"><div id="cl-list"></div></div>
+<div id="view-rows" class="view active">
+  <div class="filter-bar" id="tx-filter">
+    <input type="text" id="tf-search" placeholder="Search description, note, ref…" oninput="onTxFilterChange('search',this.value)">
+    <div class="filter-row">
+      <select id="tf-status" onchange="onTxFilterChange('status',this.value)">
+        <option value="all">All rows</option>
+        <option value="manual">Manual</option>
+        <option value="edited">Edited</option>
+        <option value="deleted">Deleted</option>
+      </select>
+      <select id="tf-month" onchange="onTxFilterChange('month',this.value)">
+        <option value="all">All months</option>
+      </select>
+      <select id="tf-category" onchange="onTxFilterChange('category',this.value)">
+        <option value="all">All categories</option>
+      </select>
+      <select id="tf-card" onchange="onTxFilterChange('card',this.value)">
+        <option value="all">All cards</option>
+      </select>
+    </div>
+    <button class="filter-clear" id="tf-clear" onclick="clearTxFilter()">Clear filters</button>
+  </div>
+  <div id="tx-list"></div>
+</div>
+<div id="view-log" class="view">
+  <div class="filter-bar" id="cl-filter">
+    <input type="text" id="f-search" placeholder="Search ref, field, value, reason…" oninput="onClFilterChange('search',this.value)">
+    <div class="filter-row">
+      <select id="f-action" onchange="onClFilterChange('action',this.value)">
+        <option value="all">All actions</option>
+        <option value="edit">Edits</option>
+        <option value="delete">Deletes</option>
+      </select>
+      <select id="f-month" onchange="onClFilterChange('month',this.value)">
+        <option value="all">All months</option>
+      </select>
+      <select id="f-category" onchange="onClFilterChange('category',this.value)">
+        <option value="all">All categories</option>
+      </select>
+      <select id="f-card" onchange="onClFilterChange('card',this.value)">
+        <option value="all">All cards</option>
+      </select>
+    </div>
+    <button class="filter-clear" id="f-clear" onclick="clearClFilter()">Clear filters</button>
+  </div>
+  <div id="cl-list"></div>
+</div>
 
 <div class="overlay hidden" id="edit-overlay">
   <div class="modal">
@@ -164,6 +213,11 @@ let transactions=[];
 let changelog=[];
 let activeIdx=null;
 
+// Changelog filter state (in-memory only — resets on reload).
+let clFilter={search:'',action:'all',month:'all',category:'all',card:'all'};
+// Transactions filter state (in-memory only — resets on reload).
+let txFilter={search:'',status:'all',month:'all',category:'all',card:'all'};
+
 // --- Helpers ---------------------------------------------------------------
 
 function fmtAmount(v){
@@ -214,6 +268,7 @@ async function loadTx(){
     transactions=rows.map(rowToTx);
     // Newest transaction date on top (dates are YYYY-MM-DD, so string compare works).
     transactions.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    populateTxFilterOptions();
     renderTx();
   }catch(e){
     showError('tx-list','Could not load database: '+e.message);
@@ -234,6 +289,7 @@ async function loadCl(){
       reason: r.Reason || '',
       ts:     r.Timestamp || '',
     }));
+    populateClFilterOptions();
     renderCl();
   }catch(e){
     showError('cl-list','Could not load changelog: '+e.message);
@@ -242,13 +298,56 @@ async function loadCl(){
 
 // --- Renderers -------------------------------------------------------------
 
+// --- Transactions filter ---------------------------------------------------
+
+function populateTxFilterOptions(){
+  const months=distinctSorted(transactions.map(t=>(t.date||'').slice(0,7)),true);
+  const cats=distinctSorted(transactions.map(t=>t.category));
+  const cards=distinctSorted(transactions.map(t=>t.card));
+  fillClSelect('tf-month',months);
+  fillClSelect('tf-category',cats);
+  fillClSelect('tf-card',cards);
+}
+
+function matchesTxFilter(tx){
+  const q=txFilter.search.trim().toLowerCase();
+  if(q){
+    const hay=[tx.ref,tx.desc,tx.note].join(' ').toLowerCase();
+    if(!hay.includes(q)) return false;
+  }
+  if(txFilter.status!=='all'){
+    if(txFilter.status==='manual' && tx.source!=='manual') return false;
+    if(txFilter.status==='edited' && !tx.edited) return false;
+    if(txFilter.status==='deleted' && !tx.deleted) return false;
+  }
+  if(txFilter.month!=='all' && (tx.date||'').slice(0,7)!==txFilter.month) return false;
+  if(txFilter.category!=='all' && tx.category!==txFilter.category) return false;
+  if(txFilter.card!=='all' && tx.card!==txFilter.card) return false;
+  return true;
+}
+
+function onTxFilterChange(key,val){ txFilter[key]=val; renderTx(); }
+
+function clearTxFilter(){
+  txFilter={search:'',status:'all',month:'all',category:'all',card:'all'};
+  ['tf-status','tf-month','tf-category','tf-card'].forEach(id=>{const s=document.getElementById(id);if(s)s.value='all';});
+  const se=document.getElementById('tf-search'); if(se) se.value='';
+  renderTx();
+}
+
 function renderTx(){
   const list=document.getElementById('tx-list');
   if(!transactions.length){
     list.innerHTML='<div class="cl-empty">No rows in database yet.</div>';
     return;
   }
-  list.innerHTML=transactions.map((tx,i)=>`
+  // Keep each row's ORIGINAL index so Edit/Delete target the right row while filtered.
+  const filtered=transactions.map((tx,i)=>({tx,i})).filter(({tx})=>matchesTxFilter(tx));
+  if(!filtered.length){
+    list.innerHTML='<div class="cl-empty">No rows match these filters.</div>';
+    return;
+  }
+  list.innerHTML=filtered.map(({tx,i})=>`
     <div class="tx-card ${tx.deleted?'deleted-card':''}">
       <div class="tx-header">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -274,11 +373,69 @@ function renderTx(){
     </div>`).join('');
 }
 
+// --- Changelog filter ------------------------------------------------------
+
+function distinctSorted(vals,desc){
+  const out=[...new Set(vals.filter(v=>v!=='' && v!=null))];
+  out.sort();
+  if(desc) out.reverse();
+  return out;
+}
+
+function fillClSelect(id,values){
+  const sel=document.getElementById(id);
+  if(!sel) return;
+  const prev=sel.value;
+  while(sel.options.length>1) sel.remove(1); // keep the "All …" option
+  values.forEach(v=>{
+    const o=document.createElement('option');
+    o.value=v; o.textContent=v; sel.appendChild(o);
+  });
+  sel.value=[...sel.options].some(o=>o.value===prev)?prev:'all';
+}
+
+function populateClFilterOptions(){
+  const months=distinctSorted(changelog.map(c=>(c.ts||'').slice(0,7)),true);
+  const cats=distinctSorted(changelog.filter(c=>c.field==='Category').flatMap(c=>[c.old,c.new]));
+  const cards=distinctSorted(changelog.filter(c=>c.field==='Card').flatMap(c=>[c.old,c.new]));
+  fillClSelect('f-month',months);
+  fillClSelect('f-category',cats);
+  fillClSelect('f-card',cards);
+}
+
+function applyClFilter(rows){
+  const q=clFilter.search.trim().toLowerCase();
+  return rows.filter(cl=>{
+    if(q){
+      const hay=[cl.ref,cl.field,cl.old,cl.new,cl.reason].join(' ').toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    if(clFilter.action!=='all' && cl.action!==clFilter.action) return false;
+    if(clFilter.month!=='all' && (cl.ts||'').slice(0,7)!==clFilter.month) return false;
+    if(clFilter.category!=='all' &&
+       !(cl.field==='Category' && (cl.old===clFilter.category || cl.new===clFilter.category))) return false;
+    if(clFilter.card!=='all' &&
+       !(cl.field==='Card' && (cl.old===clFilter.card || cl.new===clFilter.card))) return false;
+    return true;
+  });
+}
+
+function onClFilterChange(key,val){ clFilter[key]=val; renderCl(); }
+
+function clearClFilter(){
+  clFilter={search:'',action:'all',month:'all',category:'all',card:'all'};
+  ['f-action','f-month','f-category','f-card'].forEach(id=>{const s=document.getElementById(id);if(s)s.value='all';});
+  const se=document.getElementById('f-search'); if(se) se.value='';
+  renderCl();
+}
+
 function renderCl(){
   const list=document.getElementById('cl-list');
   if(!changelog.length){list.innerHTML='<div class="cl-empty">No changes logged yet.</div>';return;}
+  const filtered=applyClFilter(changelog);
+  if(!filtered.length){list.innerHTML='<div class="cl-empty">No changes match these filters.</div>';return;}
   // API order is append (oldest first). Newest first for display.
-  list.innerHTML=[...changelog].reverse().map(cl=>`
+  list.innerHTML=[...filtered].reverse().map(cl=>`
     <div class="cl-row">
       <div class="cl-top">
         <span class="cl-ref">${escapeHtmlMini(cl.ref)} · ${escapeHtmlMini(cl.ts)}</span>
