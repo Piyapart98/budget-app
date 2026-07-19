@@ -110,6 +110,45 @@
   .hist-date{font-size:11px;color:var(--text-faint);margin-top:2px;}
   .hist-right{display:flex;align-items:center;gap:6px;}
   .hist-badge{font-size:10px;background:var(--green-soft);color:var(--green);border:1px solid var(--green-border);border-radius:6px;padding:2px 7px;}
+  /* Settlement→income link (2026-07-19 spec) */
+  .hist-link{font-size:12px;color:var(--text-soft);margin-top:6px;}
+  .hist-link .diff{color:var(--red);font-weight:600;}
+  .hist-link.none{color:var(--text-faint);font-style:italic;}
+  .await-badge{font-size:10px;background:var(--amber-bg);color:var(--amber-text);
+               border:1px solid var(--amber-border);border-radius:6px;padding:2px 7px;}
+  .link-action{background:none;border:1px solid var(--border);border-radius:8px;
+               color:var(--green);font-size:12px;font-weight:600;padding:4px 10px;
+               cursor:pointer;font-family:inherit;margin-top:6px;}
+  .suggest-row{display:flex;align-items:center;gap:8px;margin-top:7px;font-size:12px;
+               background:var(--amber-bg);border:1px solid var(--amber-border);
+               border-radius:9px;padding:7px 10px;color:var(--amber-text);}
+  .suggest-row .sg-txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .suggest-row button{background:var(--green);color:#fff;border:none;border-radius:7px;
+               padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;}
+  .ls-back{position:fixed;inset:0;background:rgba(20,18,14,.4);z-index:80;display:none;
+           align-items:flex-end;justify-content:center;}
+  .ls-back.open{display:flex;}
+  .ls{background:var(--surface);width:100%;max-width:480px;border-radius:20px 20px 0 0;
+      padding:20px 18px calc(20px + env(safe-area-inset-bottom));max-height:80vh;overflow:auto;
+      box-shadow:0 -4px 24px rgba(0,0,0,.18);}
+  .ls h3{font-family:Georgia,serif;font-weight:400;font-size:19px;margin:0 0 3px;}
+  .ls .ls-sub{font-size:12px;color:var(--text-faint);margin-bottom:12px;}
+  .ls-opt{display:flex;align-items:center;gap:10px;padding:11px 4px;border-top:1px solid var(--border);
+          font-size:13.5px;cursor:pointer;}
+  .ls-opt input{width:17px;height:17px;accent-color:var(--green);flex:none;}
+  .ls-opt .lo-main{flex:1;min-width:0;}
+  .ls-opt .lo-desc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ls-opt .lo-meta{font-size:11px;color:var(--text-faint);}
+  .ls-opt .lo-amt{font-weight:600;white-space:nowrap;}
+  .ls-opt.exact .lo-amt{color:var(--green);}
+  .ls-diff{font-size:11.5px;color:var(--red);margin:2px 0 6px 27px;}
+  .ls-empty{font-size:12.5px;color:var(--text-faint);padding:10px 4px;}
+  .ls-actions{display:flex;gap:10px;margin-top:14px;}
+  .ls-actions button{flex:1;border:none;border-radius:12px;padding:13px;font-size:14px;
+          font-weight:600;cursor:pointer;font-family:inherit;}
+  .ls-save{background:var(--green);color:#fff;}
+  .ls-save:disabled{background:#dcd6ca;color:var(--text-faint);}
+  .ls-cancel{background:#f1efe8;color:var(--text-soft);}
   .hist-chev{font-size:10px;color:var(--text-faint);transition:transform .15s ease;display:inline-block;line-height:1;}
   .hist-row.open .hist-chev{transform:rotate(90deg);}
   .hist-entries{border-top:1px dashed var(--border);padding:10px 14px;display:none;}
@@ -218,18 +257,52 @@ function mapUnsettled(rows) {
 let unsettled = [];       // [{...row, _pct, _share}]
 let pendingBatches = [];  // [{settlement_id, ...}]
 let lastConfirmed = null; // {settlement_id, created_at, requested_amount, n}
+let dbRows = [];          // full database — payback-row lookups + candidates
+let historyAll = [];      // settled batches (set by loadHistory)
+
+// --- Settlement→income link helpers (2026-07-19 spec) ---
+const PAYBACK_CATS = ['Payback from someone', 'Reimbursement'];
+
+// Candidate payback rows for linking: non-deleted, payback category, last 60
+// days, not already referenced by any settlement's income_ref.
+function paybackCandidates() {
+  const used = {};
+  historyAll.concat(pendingBatches).forEach(s => {
+    String(s.income_ref || '').split('|').forEach(id => {
+      id = id.trim(); if (id && id !== 'none') used[id] = true;
+    });
+  });
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 60);
+  const cut = cutoff.toISOString().slice(0, 10);
+  return dbRows.filter(r =>
+    String(r.Deleted || '').toLowerCase() !== 'true' &&
+    PAYBACK_CATS.indexOf((r.Category || '').trim()) !== -1 &&
+    String(r.Date || '') >= cut &&
+    !used[String(r.RefID || '').trim()]
+  ).sort((a, b) => (a.Date || '') < (b.Date || '') ? 1 : -1);
+}
+
+// Rows referenced by an income_ref value (skips '' / 'none').
+function linkedRows(incomeRef) {
+  const ids = String(incomeRef || '').split('|')
+    .map(s => s.trim()).filter(s => s && s !== 'none');
+  return ids.map(id => dbRows.find(r => String(r.RefID || '').trim() === id))
+            .filter(Boolean);
+}
 
 // ---------------------------------------------------------------------------
 // Load everything
 // ---------------------------------------------------------------------------
 async function loadAll() {
   try {
-    const [u, p] = await Promise.all([
+    const [u, p, db] = await Promise.all([
       DataSource.loadRoongUnsettled(),
       DataSource.loadRoongPending(),
+      DataSource.loadDatabase().catch(() => []),
     ]);
     unsettled = mapUnsettled(u);
     pendingBatches = p;
+    dbRows = db || [];
     render();
   } catch (e) {
     document.getElementById('main-content').innerHTML =
@@ -549,17 +622,145 @@ async function uploadSlip(input) {
   }
 }
 
-async function confirmManual(btn) {
+function confirmManual(btn) {
+  // Confirm now goes through the link sheet: pick the payback row that paid
+  // this settlement (or "no money movement" / "link later"). Manual only.
   const sid = btn.dataset.sid;
-  btn.disabled = true;
-  btn.textContent = 'Confirming…';
+  const batch = pendingBatches.find(b => b.settlement_id === sid);
+  openLinkSheet(sid, parseFloat((batch && batch.requested_amount) || 0), 'confirm');
+}
+
+// ---------------------------------------------------------------------------
+// Link sheet — shared by confirm (pending) and link-later (history)
+// ---------------------------------------------------------------------------
+let sheetState = null; // {sid, requested, mode}
+
+function ensureSheet() {
+  if (document.getElementById('ls-back')) return;
+  const back = document.createElement('div');
+  back.className = 'ls-back';
+  back.id = 'ls-back';
+  back.innerHTML = `
+    <div class="ls">
+      <h3 id="ls-title">Which payment settles this?</h3>
+      <div class="ls-sub" id="ls-sub"></div>
+      <div id="ls-options"></div>
+      <div class="ls-actions">
+        <button class="ls-cancel" onclick="closeLinkSheet()">Cancel</button>
+        <button class="ls-save" id="ls-save" onclick="saveLinkSheet()">Save</button>
+      </div>
+    </div>`;
+  back.addEventListener('click', e => { if (e.target === back) closeLinkSheet(); });
+  document.body.appendChild(back);
+}
+
+function openLinkSheet(sid, requested, mode) {
+  ensureSheet();
+  sheetState = { sid, requested, mode };
+  document.getElementById('ls-title').textContent =
+    mode === 'confirm' ? 'Which payment settles this?' : 'Link a payment';
+  document.getElementById('ls-sub').textContent =
+    `${sid} · requested ${fmtBaht(requested)}`;
+  document.getElementById('ls-save').textContent =
+    mode === 'confirm' ? 'Confirm settled' : 'Save link';
+
+  const cands = paybackCandidates();
+  const exact = cands.filter(r => Math.abs((parseFloat(r.Amount) || 0) - requested) < 0.005);
+  const rest  = cands.filter(r => exact.indexOf(r) === -1);
+  // Pre-select: "no money movement" for ฿0 requests; else the exact match if
+  // there is exactly one; else "later".
+  const pre = requested === 0 ? 'none' : (exact.length === 1 ? exact[0].RefID : '');
+  const opt = (value, main, meta, amt, isExact) => `
+    <label class="ls-opt${isExact ? ' exact' : ''}">
+      <input type="radio" name="ls-pick" value="${escHtml(value)}"
+        ${String(value) === String(pre) ? 'checked' : ''} onchange="lsPicked()">
+      <span class="lo-main"><span class="lo-desc">${main}</span>
+        <div class="lo-meta">${meta}</div></span>
+      ${amt !== null ? `<span class="lo-amt">${fmtBaht(amt)}</span>` : ''}
+    </label>`;
+  let html = '';
+  exact.concat(rest).forEach(r => {
+    const amt = parseFloat(r.Amount) || 0;
+    html += opt(r.RefID, escHtml(r.Description || r.Note || '(no description)'),
+      `${fmtDateShort(r.Date)} · ${escHtml((r.Category || '').trim())}`,
+      amt, Math.abs(amt - requested) < 0.005);
+  });
+  if (!cands.length)
+    html += `<div class="ls-empty">No unlinked payback rows in the last 60 days.</div>`;
+  html += opt('none', 'No money movement', 'nothing owed — e.g. a 0% settlement', null, false);
+  if (sheetState.mode === 'confirm')
+    html += opt('', 'Link later', 'confirm now, attach the payment when it lands', null, false);
+  html += `<div class="ls-diff" id="ls-diff" style="display:none"></div>`;
+  document.getElementById('ls-options').innerHTML = html;
+  lsPicked();
+  document.getElementById('ls-back').classList.add('open');
+}
+
+function lsPicked() {
+  const picked = document.querySelector('input[name=ls-pick]:checked');
+  const saveBtn = document.getElementById('ls-save');
+  if (saveBtn && sheetState) saveBtn.disabled = !picked && sheetState.mode === 'link';
+  const diffEl = document.getElementById('ls-diff');
+  if (!picked || !diffEl) return;
+  const val = picked.value;
+  if (val && val !== 'none') {
+    const row = dbRows.find(r => String(r.RefID || '').trim() === val);
+    const amt = row ? (parseFloat(row.Amount) || 0) : 0;
+    const diff = amt - sheetState.requested;
+    if (Math.abs(diff) >= 0.005) {
+      diffEl.textContent = `${fmtBaht(Math.abs(diff))} ${diff < 0 ? 'less' : 'more'} than requested — shown as a note, amounts stay unchanged`;
+      diffEl.style.display = '';
+      return;
+    }
+  }
+  diffEl.style.display = 'none';
+}
+
+function closeLinkSheet() {
+  const back = document.getElementById('ls-back');
+  if (back) back.classList.remove('open');
+  sheetState = null;
+}
+
+async function saveLinkSheet() {
+  if (!sheetState) return;
+  const picked = document.querySelector('input[name=ls-pick]:checked');
+  const ref = picked ? picked.value : '';
+  const { sid, mode } = sheetState;
+  const saveBtn = document.getElementById('ls-save');
+  saveBtn.disabled = true;
+  saveBtn.textContent = mode === 'confirm' ? 'Confirming…' : 'Saving…';
   try {
-    const data = await DataSource.confirmRoong(sid);
-    await onConfirmed(data);
-  } catch(e) {
+    if (mode === 'confirm') {
+      const data = await DataSource.confirmRoong(sid, ref);
+      closeLinkSheet();
+      await onConfirmed(data);
+    } else {
+      await DataSource.linkRoongIncome(sid, ref);
+      closeLinkSheet();
+      showToast(`${sid} linked`);
+      loadHistory();
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = mode === 'confirm' ? 'Confirm settled' : 'Save link';
+  }
+}
+
+// One-tap link from a history card's suggestion row (still a manual tap).
+async function linkSuggested(btn, sid, ref) {
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    await DataSource.linkRoongIncome(sid, ref);
+    showToast(`${sid} linked`);
+    loadHistory();
+  } catch (e) {
     showToast('Error: ' + e.message);
     btn.disabled = false;
-    btn.textContent = '✓ Mark received';
+    btn.textContent = '✓';
   }
 }
 
@@ -613,6 +814,42 @@ async function onConfirmed(data) {
 // Settlements older than the 30-day window, held back until the user taps "show earlier".
 let historyOlder = [];
 
+// Link-status block for a settled batch: paid-by line, no-money-movement
+// note, or awaiting badge + manual link actions (2026-07-19 spec).
+function histLinkHtml(batch) {
+  const sid = batch.settlement_id;
+  const requested = parseFloat(batch.requested_amount) || 0;
+  const ref = String(batch.income_ref || '').trim();
+  if (ref === 'none') return `<div class="hist-link none">no money movement</div>`;
+  if (ref) {
+    const rows = linkedRows(ref);
+    if (!rows.length) return `<div class="hist-link">payment linked (${escHtml(ref)})</div>`;
+    const paid = rows.reduce((s, r) => s + (parseFloat(r.Amount) || 0), 0);
+    const first = rows[0];
+    const label = escHtml(first.Description || first.Note || '(no description)') +
+      (rows.length > 1 ? ` +${rows.length - 1} more` : '');
+    const diff = paid - requested;
+    let html = `<div class="hist-link">paid by “${label}” ${fmtBaht(paid)} · ${fmtDateShort(first.Date)}`;
+    if (Math.abs(diff) >= 0.005)
+      html += ` <span class="diff">${fmtBaht(Math.abs(diff))} ${diff < 0 ? 'less' : 'more'} than requested</span>`;
+    return html + `</div>`;
+  }
+  // Unlinked: badge + link action + (if exactly one exact-amount candidate)
+  // a one-tap suggestion. Taps must not toggle the card open.
+  let html = `<div class="hist-link"><span class="await-badge">awaiting payment link</span>
+    <button class="link-action" onclick="event.stopPropagation();openLinkSheet('${escHtml(sid)}',${requested},'link')">link…</button></div>`;
+  const exact = paybackCandidates().filter(r =>
+    Math.abs((parseFloat(r.Amount) || 0) - requested) < 0.005);
+  if (exact.length === 1) {
+    const r = exact[0];
+    html += `<div class="suggest-row" onclick="event.stopPropagation()">
+      <span class="sg-txt">“${escHtml(r.Description || r.Note || '(no description)')}” ${fmtBaht(parseFloat(r.Amount) || 0)} · ${fmtDateShort(r.Date)} — link?</span>
+      <button onclick="event.stopPropagation();linkSuggested(this,'${escHtml(sid)}','${escHtml(r.RefID)}')">✓</button>
+    </div>`;
+  }
+  return html;
+}
+
 function histRowHtml(batch) {
   const expRows = batch.expense_rows || [];
   const n = expRows.length;
@@ -623,6 +860,7 @@ function histRowHtml(batch) {
         <div class="hist-id">${escHtml(batch.settlement_id)}</div>
         <div class="hist-amount">${fmtBaht(batch.requested_amount)}</div>
         <div class="hist-date">${fmtDateShort((batch.created_at||'').substring(0,10))} · ${n} expense${n===1?'':'s'}</div>
+        ${histLinkHtml(batch)}
       </div>
       <div class="hist-right">
         <span class="hist-badge">settled</span>
@@ -651,6 +889,7 @@ function showAllHistory() {
 async function loadHistory() {
   try {
     const history = await DataSource.loadRoongHistory();
+    historyAll = history;   // link helpers need the full settled list
     const el = document.getElementById('history-content');
     if (!el) return;
     if (!history.length) {

@@ -84,6 +84,7 @@
   var ROONG_SETTLEMENT_COLUMNS = [
     'settlement_id', 'created_at', 'status', 'requested_amount',
     'row_ids', 'slip_file', 'confirmed_at', 'confirmed_method',
+    'income_ref',  // payback row RefID(s), 'none', or '' = unlinked. Trailing.
   ];
   var ROONG_CATEGORY = 'With Roong';
   var ROONG_SETTLEMENTS_PATH = 'roong_settlements.csv';
@@ -981,14 +982,16 @@
     return { ok: true, settlement_id: sid };
   }
 
-  async function confirmRoong(settlementId) {
+  async function confirmRoong(settlementId, incomeRef) {
     // Slip upload is Mac-only (needs server filesystem). On GitHub mode
-    // we always confirm as manual.
+    // we always confirm as manual. incomeRef (optional): payback row
+    // RefID(s), 'none' for no-money-movement, or falsy to leave unlinked.
     if (MODE === 'local') {
       // Called from the manual path — use FormData
       var fd = new FormData();
       fd.append('settlement_id', settlementId);
       fd.append('method', 'manual');
+      if (incomeRef) fd.append('income_ref', incomeRef);
       var res = await fetch('/api/roong/confirm', { method: 'POST', body: fd });
       var data = await res.json().catch(function () { return {}; });
       if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
@@ -1001,12 +1004,38 @@
           rows[i].status = 'settled';
           rows[i].confirmed_at = ts;
           rows[i].confirmed_method = 'manual';
+          if (incomeRef) rows[i].income_ref = incomeRef;
           break;
         }
       }
       return rows;
     }, 'roong confirm: ' + settlementId, ROONG_SETTLEMENT_COLUMNS);
     return { ok: true, settlement_id: settlementId, confirmed_at: ts, requested_amount: '' };
+  }
+
+  async function linkRoongIncome(settlementId, incomeRef) {
+    // Attach (or replace) the payback income-row reference on a settlement.
+    // Manual action only — nothing calls this automatically.
+    if (MODE === 'local') {
+      var res = await fetch('/api/roong/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settlement_id: settlementId, income_ref: incomeRef || '' }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+      return data;
+    }
+    await mutateCsv(ROONG_SETTLEMENTS_PATH, function (rows) {
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].settlement_id === settlementId) {
+          rows[i].income_ref = incomeRef || '';
+          break;
+        }
+      }
+      return rows;
+    }, 'roong link: ' + settlementId, ROONG_SETTLEMENT_COLUMNS);
+    return { ok: true, settlement_id: settlementId, income_ref: incomeRef || '' };
   }
 
   async function cancelRoong(settlementId) {
@@ -1629,6 +1658,7 @@
     loadRoongHistory:    loadRoongHistory,
     submitRoongRequest:  submitRoongRequest,
     confirmRoong:        confirmRoong,
+    linkRoongIncome:     linkRoongIncome,
     cancelRoong:         cancelRoong,
 
     loadDrafts:          loadDrafts,

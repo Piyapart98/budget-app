@@ -285,6 +285,7 @@
 
   var rows = null, isIncome = null, isSaving = null, goals = null;
   var settledSet = {}, pendingSet = {};   // settlement_id -> true
+  var incomeRefMap = {};                  // payback row RefID -> settlement_id
   var cur = new Date(); cur.setDate(1);
 
   function key(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
@@ -756,6 +757,15 @@
     var entriesHtml = entries.length ? entries.map(function (e) {
       var excl = e.excl ? ' excl' : '';
       var tag = e.excl ? ' <span class="x-tag">excluded</span>' : '';
+      if (e.excl) {
+        // Settlement link chip: → Sxxx when a settlement's income_ref points
+        // at this row; quiet "no settlement" otherwise (orphan surfacing).
+        var sid = incomeRefMap[String(e.r.RefID || '').trim()];
+        tag += sid
+          ? ' <span class="x-tag" style="background:var(--green-soft);color:var(--green);border-color:transparent">→ ' +
+            Mock.escapeHtml(sid) + '</span>'
+          : ' <span class="x-tag">no settlement</span>';
+      }
       return '<div class="entry' + excl + '"><span class="ed">' + entryDate(e.r) +
         '</span><span class="en">' + entryDesc(e.r) + tag + '</span>' +
         '<span class="ea">' + fmtBaht0(parseFloat(e.r.Amount) || 0) + '</span></div>';
@@ -966,8 +976,16 @@
         DataSource.loadRoongPending().catch(function () { return []; }),
         DataSource.loadRoongHistory().catch(function () { return []; }),
       ]).then(function (res) {
-        (res[0] || []).forEach(function (s) { pendingSet[s.settlement_id] = true; });
-        (res[1] || []).forEach(function (s) { settledSet[s.settlement_id] = true; });
+        function takeRefs(s) {
+          // income_ref: payback row RefID(s) that paid this settlement
+          // ('' unlinked, 'none' = no money movement) — 2026-07-19 spec.
+          String(s.income_ref || '').split('|').forEach(function (id) {
+            id = id.trim();
+            if (id && id !== 'none') incomeRefMap[id] = s.settlement_id;
+          });
+        }
+        (res[0] || []).forEach(function (s) { pendingSet[s.settlement_id] = true; takeRefs(s); });
+        (res[1] || []).forEach(function (s) { settledSet[s.settlement_id] = true; takeRefs(s); });
       }).catch(function () {});
 
       rows = await DataSource.loadDatabase();
