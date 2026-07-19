@@ -75,8 +75,12 @@
           var flagged = (r.Category || '').trim() === 'With Roong' ||
                         String(r.Settle || '').toLowerCase() === 'true';
           if (flagged) {
-            var s = parseFloat(r.roong_share);
-            amt -= (s > 0) ? Math.min(s, amt) : amt * 0.5;
+            // Stamped share is authoritative, an explicit 0 included; the 50%
+            // estimate applies only while roong_share is blank (not requested).
+            var raw = String(r.roong_share == null ? '' : r.roong_share).trim();
+            amt -= (raw !== '' && !isNaN(parseFloat(raw)))
+              ? Math.min(Math.max(parseFloat(raw), 0), amt)
+              : amt * 0.5;
           }
           spent += amt;
         }

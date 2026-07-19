@@ -299,8 +299,13 @@
   function shareOf(r) {
     if (!isFlagged(r)) return 0;
     var amt = parseFloat(r.Amount) || 0;
-    var s = parseFloat(r.roong_share);
-    return (s > 0) ? Math.min(s, amt) : amt * 0.5;  // stamped share, else 50% estimate
+    // A stamped share is authoritative — INCLUDING an explicit 0 ("all mine").
+    // The 50% estimate applies only while roong_share is blank (no settlement
+    // request yet; a cancelled request clears it back to blank).
+    var raw = String(r.roong_share == null ? '' : r.roong_share).trim();
+    if (raw !== '' && !isNaN(parseFloat(raw)))
+      return Math.min(Math.max(parseFloat(raw), 0), amt);
+    return amt * 0.5;
   }
   function netOf(r) { return (parseFloat(r.Amount) || 0) - shareOf(r); }
   function isPayback(c) { return PAYBACK_CATS.indexOf((c || '').trim()) !== -1; }
