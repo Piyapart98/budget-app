@@ -49,7 +49,6 @@
     background:var(--bg);color:var(--text);width:84px;-webkit-appearance:none;}
   .share-inputs input:focus{outline:2px solid var(--green);outline-offset:-1px;border-color:transparent;}
   .share-sep{font-size:12px;color:var(--text-faint);}
-  .share-preview{font-size:12px;color:var(--green);margin-top:5px;}
 
   /* Select-all */
   .select-all-row{display:flex;align-items:center;gap:9px;padding:2px 2px 12px;cursor:pointer;user-select:none;}
@@ -293,8 +292,7 @@ function render() {
             <input type="number" min="0" max="100" step="1" value="${r._pct.toFixed(0)}" data-idx="${i}" data-type="pct" placeholder="%">
             <span class="share-sep">%  =</span>
             <input type="number" min="0" step="0.5" value="${r._share.toFixed(2)}" data-idx="${i}" data-type="baht" placeholder="฿">
-          </div>
-          <div class="share-preview" id="preview-${i}">Roong pays ${fmtBaht(r._share)}</div>` : ''}
+          </div>` : ''}
         </div>
       </div>`;
 
@@ -423,8 +421,6 @@ function attachListeners() {
       unsettled[i]._share = amount * pct / 100;
       const bahtInput = document.querySelector(`input[data-type=baht][data-idx="${i}"]`);
       if (bahtInput) bahtInput.value = unsettled[i]._share.toFixed(2);
-      const preview = document.getElementById(`preview-${i}`);
-      if (preview) preview.textContent = `Roong pays ${fmtBaht(unsettled[i]._share)}`;
       updateSummaryBar();
     });
   });
@@ -438,8 +434,6 @@ function attachListeners() {
       unsettled[i]._pct = amount > 0 ? Math.round(share / amount * 100) : 0;
       const pctInput = document.querySelector(`input[data-type=pct][data-idx="${i}"]`);
       if (pctInput) pctInput.value = unsettled[i]._pct;
-      const preview = document.getElementById(`preview-${i}`);
-      if (preview) preview.textContent = `Roong pays ${fmtBaht(share)}`;
       updateSummaryBar();
     });
   });
