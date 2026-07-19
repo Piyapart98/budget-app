@@ -64,12 +64,21 @@
       var isInflow = function (c) { return isIncome(c) || isSaving(c); };
       var live = rows.filter(function (r) { return !Mock.isDeleted(r); });
 
-      // This month's spending
+      // This month's REAL spending — same rule as the monthly report (spec
+      // 2026-07-19): flagged rows (With Roong / Settle tick) count net of the
+      // share owed back — stamped roong_share, else a 50% estimate.
       var mk = Mock.thisMonthKey();
       var spent = 0;
       live.forEach(function (r) {
         if (Mock.monthKey(r.Date) === mk && !isInflow(r.Category)) {
-          spent += parseFloat(r.Amount) || 0;
+          var amt = parseFloat(r.Amount) || 0;
+          var flagged = (r.Category || '').trim() === 'With Roong' ||
+                        String(r.Settle || '').toLowerCase() === 'true';
+          if (flagged) {
+            var s = parseFloat(r.roong_share);
+            amt -= (s > 0) ? Math.min(s, amt) : amt * 0.5;
+          }
+          spent += amt;
         }
       });
       document.getElementById('hl-amount').textContent = Mock.fmtBaht(spent);
