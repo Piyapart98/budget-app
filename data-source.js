@@ -1038,6 +1038,34 @@
     return { ok: true, settlement_id: settlementId, income_ref: incomeRef || '' };
   }
 
+  async function unconfirmRoong(settlementId) {
+    // Revert a settled settlement to 'pending' (payment didn't happen).
+    // Clears confirmed_at/confirmed_method/income_ref; shares stay stamped.
+    if (MODE === 'local') {
+      var res = await fetch('/api/roong/unconfirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settlement_id: settlementId }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+      return data;
+    }
+    await mutateCsv(ROONG_SETTLEMENTS_PATH, function (rows) {
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].settlement_id === settlementId) {
+          rows[i].status = 'pending';
+          rows[i].confirmed_at = '';
+          rows[i].confirmed_method = '';
+          rows[i].income_ref = '';
+          break;
+        }
+      }
+      return rows;
+    }, 'roong unconfirm: ' + settlementId, ROONG_SETTLEMENT_COLUMNS);
+    return { ok: true, settlement_id: settlementId, status: 'pending' };
+  }
+
   async function cancelRoong(settlementId) {
     if (MODE === 'local') {
       var res = await fetch('/api/roong/cancel', {
@@ -1659,6 +1687,7 @@
     submitRoongRequest:  submitRoongRequest,
     confirmRoong:        confirmRoong,
     linkRoongIncome:     linkRoongIncome,
+    unconfirmRoong:      unconfirmRoong,
     cancelRoong:         cancelRoong,
 
     loadDrafts:          loadDrafts,
