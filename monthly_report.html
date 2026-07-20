@@ -232,8 +232,9 @@
 
   <div class="foot">Amounts are your <b>real share</b>: shared/flagged expenses are
     counted net of what others owe you, from day one — shares not yet requested are
-    estimated at 50%. Projection = spend so far + trailing 28-day daily run-rate ×
-    days left.</div>
+    estimated at 50%. Projection = spend so far + fixed commitments still expected
+    (To Mom, Utilities and Subs — median of the last 3 months, less what's already
+    paid) + a capped 8-week daily rate × days left.</div>
 </div>
 
 <!-- Goal-editor modal -->
@@ -456,6 +457,20 @@
     fixedRemaining(key(cur)).forEach(function (f) { fsum += f.amount; });
     return t.spent + fsum + cappedRate() * di.left;
   }
+  function projectionCurve(t, di) {  // cumulative expected, days elapsed+1..days
+    var rate = cappedRate(), fx = fixedRemaining(key(cur));
+    var out = [], cumv = t.spent;
+    for (var d = di.elapsed + 1; d <= di.days; d++) {
+      cumv += rate;
+      fx.forEach(function (f) {
+        // step lands on the typical day; if that's past (or today), tomorrow
+        var stepDay = Math.min(Math.max(f.dom, di.elapsed + 1), di.days);
+        if (d === stepDay) cumv += f.amount;
+      });
+      out.push(cumv);
+    }
+    return out;
+  }
   function typicalCurve(days) {  // avg cumulative per day over the 6 months before `cur`
     var months = [];
     for (var i = 1; i <= 6; i++) months.push(key(shiftMonth(cur, -i)));
@@ -645,12 +660,18 @@
       s += '<path d="' + area + '" fill="url(#pg)"/>' +
            '<path d="' + p + '" fill="none" stroke="' + AMBER +
            '" stroke-width="2.6" stroke-linecap="round"/>';
-      if (PROJ !== null)
-        s += '<line x1="' + X(di.elapsed) + '" y1="' + Y(cum[cum.length - 1]) +
-             '" x2="' + X(di.days) + '" y2="' + Y(PROJ) + '" stroke="' + AMBER +
-             '" stroke-width="2" stroke-dasharray="2 4" opacity=".65"/>' +
-             '<circle cx="' + X(di.days) + '" cy="' + Y(PROJ) + '" r="4" fill="' +
+      if (PROJ !== null) {
+        var pcv = projectionCurve(t, di);
+        if (pcv.length) {
+          var pp = 'M' + X(di.elapsed) + ',' + Y(cum[cum.length - 1]);
+          for (var q = 0; q < pcv.length; q++)
+            pp += 'L' + X(di.elapsed + 1 + q) + ',' + Y(pcv[q]);
+          s += '<path d="' + pp + '" fill="none" stroke="' + AMBER +
+               '" stroke-width="2" stroke-dasharray="2 4" opacity=".65"/>';
+        }
+        s += '<circle cx="' + X(di.days) + '" cy="' + Y(PROJ) + '" r="4" fill="' +
              AMBER + '" opacity=".65"/>';
+      }
       s += '<circle cx="' + X(cum.length) + '" cy="' + Y(cum[cum.length - 1]) +
            '" r="4.5" fill="' + AMBER + '"/>';
     }
