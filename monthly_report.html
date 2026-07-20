@@ -283,6 +283,10 @@
   // Hardcoded by design — see the redesign spec §7.
   var PAYBACK_CATS = ['Reimbursement', 'Payback from someone'];
 
+  // Categories treated as monthly fixed commitments by the projection
+  // (spec 2026-07-20 §2.1). Inferred from history — no stored amounts.
+  var FIXED_CATS = ['To Mom', 'Utilities and Subs'];
+
   var rows = null, isIncome = null, isSaving = null, goals = null;
   var settledSet = {}, pendingSet = {};   // settlement_id -> true
   var incomeRefMap = {};                  // payback row RefID -> settlement_id
@@ -310,6 +314,13 @@
   }
   function netOf(r) { return (parseFloat(r.Amount) || 0) - shareOf(r); }
   function isPayback(c) { return PAYBACK_CATS.indexOf((c || '').trim()) !== -1; }
+  function isFixedCat(c) { return FIXED_CATS.indexOf((c || '').trim()) !== -1; }
+  function median(a) {
+    if (!a.length) return 0;
+    var s = a.slice().sort(function (x, y) { return x - y; });
+    var mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  }
   function fmtBaht0(v) {
     var n = Math.round(v);
     return (n < 0 ? '−฿' : '฿') + Math.abs(n).toLocaleString('en-US');
@@ -368,17 +379,83 @@
       sum += m[mk + '-' + String(d).padStart(2, '0')] || 0;
     return sum;
   }
-  function trailingRate() {      // ฿/day over the last 28 calendar days
-    var m = dailyNet(), today = new Date(); today.setHours(0, 0, 0, 0);
-    var sum = 0;
-    for (var i = 1; i <= 28; i++) {
-      var d = new Date(today); d.setDate(today.getDate() - i);
-      sum += m[d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
-               '-' + String(d.getDate()).padStart(2, '0')] || 0;
-    }
-    return sum / 28;
+  function isoDay(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+           '-' + String(d.getDate()).padStart(2, '0');
   }
-  function projection(t, di) { return t.spent + trailingRate() * di.left; }
+  function dailyVarNet() {       // memoized: variable spend only (no fixed cats)
+    if (dailyVarNet._c) return dailyVarNet._c;
+    var m = {};
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r) || isIncome(r.Category) || isSaving(r.Category) ||
+          isFixedCat(r.Category)) return;
+      var ds = String(r.Date || '').slice(0, 10);
+      if (ds.length === 10) m[ds] = (m[ds] || 0) + netOf(r);
+    });
+    return (dailyVarNet._c = m);
+  }
+  function cappedRate() {        // ฿/day: trailing 56 days of variable spend,
+    var m = dailyVarNet();       // each day capped at p90 of non-zero days
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var vals = [];
+    for (var i = 1; i <= 56; i++) {
+      var d = new Date(today); d.setDate(today.getDate() - i);
+      vals.push(m[isoDay(d)] || 0);
+    }
+    var nz = vals.filter(function (v) { return v > 0; })
+                 .sort(function (x, y) { return x - y; });
+    var cap = nz.length ? nz[Math.min(nz.length - 1, Math.floor(0.90 * nz.length))]
+                        : Infinity;
+    var sum = 0;
+    vals.forEach(function (v) { sum += Math.min(v, cap); });
+    return sum / 56;
+  }
+  function fixedInfo() {         // memoized: [{cat, expected, dom}] from the
+    if (fixedInfo._c) return fixedInfo._c;   // 3 complete months before `cur`
+    var firstMk = null;
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r)) return;
+      var rmk = Mock.monthKey(r.Date);
+      if (rmk && (!firstMk || rmk < firstMk)) firstMk = rmk;
+    });
+    var months = [];
+    for (var i = 1; i <= 3; i++) {
+      var mk2 = key(shiftMonth(cur, -i));
+      if (firstMk && mk2 >= firstMk) months.push(mk2);
+    }
+    var out = FIXED_CATS.map(function (c) {
+      var totals = months.map(function () { return 0; }), doms = [];
+      rows.forEach(function (r) {
+        if (Mock.isDeleted(r) || (r.Category || '').trim() !== c) return;
+        var idx = months.indexOf(Mock.monthKey(r.Date));
+        if (idx === -1) return;
+        totals[idx] += netOf(r);
+        doms.push(parseInt(String(r.Date).slice(8, 10), 10) || 1);
+      });
+      return { cat: c, expected: median(totals),
+               dom: doms.length ? Math.round(median(doms)) : 1 };
+    });
+    return (fixedInfo._c = out);
+  }
+  function fixedRemaining(mk) {  // [{cat, amount, dom}] still expected this month
+    var paid = {};
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r) || Mock.monthKey(r.Date) !== mk) return;
+      var c = (r.Category || '').trim();
+      if (isFixedCat(c)) paid[c] = (paid[c] || 0) + netOf(r);
+    });
+    var out = [];
+    fixedInfo().forEach(function (f) {
+      var rem = Math.max(0, f.expected - (paid[f.cat] || 0));
+      if (rem > 0) out.push({ cat: f.cat, amount: rem, dom: f.dom });
+    });
+    return out;
+  }
+  function projection(t, di) {   // spent + remaining fixed + capped rate × left
+    var fsum = 0;                // (spec 2026-07-20 §2)
+    fixedRemaining(key(cur)).forEach(function (f) { fsum += f.amount; });
+    return t.spent + fsum + cappedRate() * di.left;
+  }
   function typicalCurve(days) {  // avg cumulative per day over the 6 months before `cur`
     var months = [];
     for (var i = 1; i <= 6; i++) months.push(key(shiftMonth(cur, -i)));
@@ -441,6 +518,7 @@
   // ================= render =================
   function render() {
     dailyNet._c = null;   // rows/goals may have changed (goal save re-enters here)
+    dailyVarNet._c = null; fixedInfo._c = null;
     var mk = key(cur);
     document.getElementById('month-label-btn').innerHTML =
       Mock.escapeHtml(label(cur)) + ' <span class="picker-chev">▼</span>';
