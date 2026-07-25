@@ -62,6 +62,36 @@
 .settle-sub{font-size:11px;color:var(--text-faint);margin-top:1px;}
 .settle-row.auto{border-color:var(--green-border);background:var(--green-bg);}
 .settle-row.auto .settle-sub{color:var(--green);}
+/* Reimbursement picker — settle unsettled items against this income row
+   (2026-07-25 spec). Collapsed by default so the form stays short. */
+.reimb-wrap{margin:0 0 14px;background:var(--surface);border:1px solid var(--border);
+            border-radius:12px;overflow:hidden;}
+.reimb-head{display:flex;align-items:center;gap:8px;padding:12px 13px;cursor:pointer;
+            user-select:none;-webkit-tap-highlight-color:transparent;}
+.reimb-lab{font-size:14px;flex:1;}
+.reimb-sum{font-size:12px;color:var(--text-muted);font-family:var(--mono);}
+.reimb-chev{font-size:9px;color:var(--text-faint);transition:transform .15s;display:inline-block;}
+.reimb-wrap.open .reimb-chev{transform:rotate(90deg);}
+.reimb-body{display:none;border-top:1px solid var(--border);padding:0 13px 12px;}
+.reimb-wrap.open .reimb-body{display:block;}
+.reimb-item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;
+            border-bottom:1px solid var(--border);}
+.reimb-item:last-child{border-bottom:none;}
+.reimb-item input[type=checkbox]{width:18px;height:18px;accent-color:var(--green);
+            flex:none;margin-top:2px;}
+.reimb-main{flex:1;min-width:0;}
+.reimb-top{display:flex;justify-content:space-between;gap:8px;}
+.reimb-desc{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.reimb-amt{font-size:13px;font-weight:500;white-space:nowrap;}
+.reimb-meta{font-size:11px;color:var(--text-faint);font-family:var(--mono);margin-top:2px;}
+.reimb-share{display:flex;align-items:center;gap:6px;margin-top:8px;}
+.reimb-share input{width:84px;padding:6px 8px;font-size:13px;font-family:var(--mono);}
+.reimb-share span{font-size:11px;color:var(--text-faint);font-family:var(--mono);}
+.reimb-foot{font-size:12px;font-family:var(--mono);color:var(--text-muted);
+            padding-top:10px;border-top:1px solid var(--border);}
+.reimb-diff{color:var(--amber);background:var(--amber-bg);border-radius:6px;
+            padding:6px 8px;margin-top:6px;}
+.reimb-empty{font-size:12px;color:var(--text-faint);font-family:var(--mono);padding:12px 0;}
 </style>
 <!-- card-split v1 (2026-06-14) -->
 </head>
@@ -126,6 +156,14 @@
     <span><span class="settle-lab">Include in settlement</span>
       <div class="settle-sub" id="settle-sub">will appear on the settlement page</div></span>
   </label>
+  <div class="reimb-wrap" id="reimb-wrap" style="display:none;">
+    <div class="reimb-head" id="reimb-head">
+      <span class="reimb-lab">Reimburses</span>
+      <span class="reimb-sum" id="reimb-sum">none selected</span>
+      <span class="reimb-chev">▶</span>
+    </div>
+    <div class="reimb-body" id="reimb-body"></div>
+  </div>
   <div class="err" id="form-err"></div>
   <button class="btn btn-primary" onclick="goReview()">Review entry →</button>
 </div>
@@ -139,6 +177,7 @@
     <div class="review-row"><span class="review-label">Card</span><span class="review-val" id="r-card">—</span></div>
     <div class="review-row"><span class="review-label">Note</span><span class="review-val" id="r-note">—</span></div>
     <div class="review-row"><span class="review-label">Settle</span><span class="review-val" id="r-settle">—</span></div>
+    <div class="review-row" id="r-reimb-row" style="display:none;"><span class="review-label">Reimburses</span><span class="review-val" id="r-reimb">—</span></div>
     <div class="review-row"><span class="review-label">Source</span><span class="review-val" style="color:var(--amber);">manual</span></div>
   </div>
   <div class="notice">No slip attached. Row will be marked <strong>source: manual</strong> in database.csv.</div>
@@ -214,7 +253,178 @@ document.getElementById('f-cat').addEventListener('change',function(){
   document.getElementById('f-settle').checked=isRoong;
   settleTouched=false;
   refreshSettleRow(isRoong);
+  refreshReimbVisibility();
 });
+
+// --- Reimbursement picker (2026-07-25 spec) --------------------------------
+// A Reimbursement row can settle unsettled expenses the moment it is created.
+// The picks ride with the row in doCommit() so the settlement is written as
+// soon as the RefID is assigned — see run_pipeline.create_reimbursement_settlement.
+const REIMB_CAT='Reimbursement';
+let reimbPool=null;     // null = not loaded yet; [] = loaded and empty
+let reimbPicks={};      // RefID -> share in baht
+let reimbLoading=false;
+
+function reimbFmt(n){
+  const x=parseFloat(n)||0;
+  return '฿'+(x===Math.round(x)?Math.round(x).toLocaleString():x.toFixed(2));
+}
+function reimbEsc(s){
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function reimbTotal(){
+  return Object.keys(reimbPicks)
+    .reduce((t,k)=>t+(parseFloat(reimbPicks[k])||0),0);
+}
+function reimbDate(iso){
+  try{return new Date(iso+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'});}
+  catch(e){return iso||'';}
+}
+// Categories that are inflows. Read straight off the Category select so this
+// can never drift from the list the user actually picks from.
+function inflowCats(){
+  const skip={};
+  document.querySelectorAll('#f-cat optgroup').forEach(g=>{
+    if(g.label==='Income'||g.label==='Saving')
+      g.querySelectorAll('option').forEach(o=>{skip[o.textContent.trim()]=true;});
+  });
+  return skip;
+}
+
+function refreshReimbVisibility(){
+  const on=v('f-cat')===REIMB_CAT;
+  document.getElementById('reimb-wrap').style.display=on?'':'none';
+  if(!on){reimbPicks={};renderReimb();return;}
+  reimbEnsurePool();
+  renderReimb();
+}
+
+async function reimbEnsurePool(){
+  if(reimbPool!==null||reimbLoading)return;
+  reimbLoading=true;
+  renderReimb();
+  try{
+    const pool=await DataSource.loadRoongUnsettled();
+    // An income/saving row can carry Settle=True today, which would put an
+    // inflow in the pool as if it were an expense. Keep those out of here.
+    const skip=inflowCats();
+    reimbPool=pool.filter(r=>!skip[String(r.Category||'').trim()]);
+  }catch(e){reimbPool=[];}
+  reimbLoading=false;
+  renderReimb();
+}
+
+function renderReimb(){
+  const sum=document.getElementById('reimb-sum');
+  const body=document.getElementById('reimb-body');
+  const n=Object.keys(reimbPicks).length;
+  sum.textContent=n?n+' · '+reimbFmt(reimbTotal()):'none selected';
+  const row=document.getElementById('r-reimb-row');
+  if(row){
+    row.style.display=n?'':'none';
+    document.getElementById('r-reimb').textContent=
+      n+' item'+(n===1?'':'s')+' · '+reimbFmt(reimbTotal());
+  }
+  if(reimbPool===null){
+    body.innerHTML='<div class="reimb-empty">'+
+      (reimbLoading?'Loading unsettled items…':'')+'</div>';
+    return;
+  }
+  if(!reimbPool.length){
+    body.innerHTML='<div class="reimb-empty">Nothing unsettled to reimburse.</div>';
+    return;
+  }
+  let html='';
+  reimbPool.forEach((r,i)=>{
+    const ref=String(r.RefID||'');
+    const picked=Object.prototype.hasOwnProperty.call(reimbPicks,ref);
+    const amt=parseFloat(r.Amount)||0;
+    const share=picked?(parseFloat(reimbPicks[ref])||0):amt;
+    const pct=amt>0?Math.round(share/amt*100):0;
+    html+='<div class="reimb-item">'+
+      '<input type="checkbox" data-ref="'+reimbEsc(ref)+'"'+(picked?' checked':'')+'>'+
+      '<div class="reimb-main">'+
+        '<div class="reimb-top"><span class="reimb-desc">'+reimbEsc(r.Description||'')+
+          '</span><span class="reimb-amt">'+reimbFmt(amt)+'</span></div>'+
+        '<div class="reimb-meta">'+reimbDate(r.Date)+' · '+
+          reimbEsc(r.Category||'')+' · '+reimbEsc(ref)+'</div>'+
+        (picked?'<div class="reimb-share">'+
+          '<input type="number" min="0" max="100" step="1" value="'+pct+
+            '" data-ref="'+reimbEsc(ref)+'" data-kind="pct">'+
+          '<span>% =</span>'+
+          '<input type="number" min="0" step="0.5" value="'+share.toFixed(2)+
+            '" data-ref="'+reimbEsc(ref)+'" data-kind="baht">'+
+        '</div>':'')+
+      '</div></div>';
+  });
+  html+='<div class="reimb-foot" id="reimb-foot"></div>';
+  body.innerHTML=html;
+  wireReimb();
+  refreshReimbFoot();
+}
+
+function refreshReimbFoot(){
+  const foot=document.getElementById('reimb-foot');
+  if(!foot)return;
+  const n=Object.keys(reimbPicks).length, total=reimbTotal();
+  const amount=parseFloat(v('f-amount'))||0;
+  let html=n+' selected · '+reimbFmt(total);
+  const diff=total-amount;
+  if(n&&amount>0&&Math.abs(diff)>=0.005){
+    html+='<div class="reimb-diff">'+reimbFmt(Math.abs(diff))+' '+
+      (diff<0?'less':'more')+' than the reimbursement — amounts stay as entered</div>';
+  }
+  foot.innerHTML=html;
+  document.getElementById('reimb-sum').textContent=
+    n?n+' · '+reimbFmt(total):'none selected';
+}
+
+function wireReimb(){
+  document.querySelectorAll('#reimb-body input[type=checkbox]').forEach(cb=>{
+    cb.addEventListener('change',function(){
+      const ref=cb.dataset.ref;
+      if(cb.checked){
+        const row=reimbPool.find(r=>String(r.RefID||'')===ref);
+        reimbPicks[ref]=parseFloat(row&&row.Amount)||0;   // default: the whole thing
+      }else{
+        delete reimbPicks[ref];
+      }
+      renderReimb();
+    });
+  });
+  // Share edits update in place — re-rendering here would drop focus mid-typing.
+  document.querySelectorAll('#reimb-body input[data-kind]').forEach(inp=>{
+    inp.addEventListener('input',function(){
+      const ref=inp.dataset.ref;
+      const row=reimbPool.find(r=>String(r.RefID||'')===ref);
+      const amt=parseFloat(row&&row.Amount)||0;
+      let share;
+      if(inp.dataset.kind==='pct'){
+        const pct=Math.max(0,Math.min(100,parseFloat(inp.value)||0));
+        share=amt*pct/100;
+        const other=document.querySelector('#reimb-body input[data-kind=baht][data-ref="'+ref+'"]');
+        if(other)other.value=share.toFixed(2);
+      }else{
+        share=Math.max(0,Math.min(amt,parseFloat(inp.value)||0));
+        const other=document.querySelector('#reimb-body input[data-kind=pct][data-ref="'+ref+'"]');
+        if(other)other.value=amt>0?Math.round(share/amt*100):0;
+      }
+      reimbPicks[ref]=share;
+      refreshReimbFoot();
+    });
+  });
+}
+
+function reimbPayload(){
+  return Object.keys(reimbPicks)
+    .map(ref=>({RefID:ref,roong_share:parseFloat(reimbPicks[ref])||0}));
+}
+
+document.getElementById('reimb-head').addEventListener('click',function(){
+  document.getElementById('reimb-wrap').classList.toggle('open');
+});
+document.getElementById('f-amount').addEventListener('input',refreshReimbFoot);
 document.getElementById('f-settle').addEventListener('change',function(){
   settleTouched=true;
   refreshSettleRow(false);
@@ -244,6 +454,7 @@ function goReview(){
   document.getElementById('r-note').textContent=v('f-note')||'blank';
   document.getElementById('r-settle').textContent=
     document.getElementById('f-settle').checked?'Yes':'No';
+  renderReimb();
   show('review-view');
 }
 
@@ -257,6 +468,22 @@ async function doCommit(){
   const origText=btn.textContent;
   btn.textContent='Committing…';
 
+  const picks=v('f-cat')===REIMB_CAT?reimbPayload():[];
+  // Warn, don't block, when the picks don't add up to the reimbursement.
+  if(picks.length){
+    const total=picks.reduce((t,p)=>t+p.roong_share,0);
+    const amt=parseFloat(v('f-amount'))||0;
+    const diff=total-amt;
+    if(Math.abs(diff)>=0.005&&!confirm(
+        'The '+picks.length+' selected item'+(picks.length===1?'':'s')+
+        ' total '+reimbFmt(total)+', which is '+reimbFmt(Math.abs(diff))+' '+
+        (diff<0?'less':'more')+' than this reimbursement of '+reimbFmt(amt)+
+        '.\n\nCommit anyway?')){
+      btn.disabled=false;back.disabled=false;btn.textContent=origText;
+      return;
+    }
+  }
+
   const payload={
     Date:        v('f-date'),
     Description: v('f-desc'),
@@ -266,6 +493,7 @@ async function doCommit(){
     Note:        v('f-note'),
     Settle:      document.getElementById('f-settle').checked?'True':'',
   };
+  if(picks.length)payload.Reimburses=picks;
 
   try{
     const data=await DataSource.submitEntry(payload);
@@ -274,8 +502,20 @@ async function doCommit(){
     const amount='฿'+parseInt(row.Amount||payload.Amount).toLocaleString();
     const date=row.Date||payload.Date;
     const ref=row.RefID||'manual';
+    // The row is saved either way. If its settlement leg failed, say so plainly
+    // rather than implying the items were settled — nothing is half-stamped,
+    // and the picks can be redone from the settlement page.
+    let extra='';
+    if(data.reimburse_error){
+      extra='<br><span style="color:var(--red)">Row saved, but the items were '+
+            'not settled: '+reimbEsc(data.reimburse_error)+'</span>';
+    }else if(data.reimbursement&&data.reimbursement.settlement_id){
+      extra='<br>settled '+data.reimbursement.rows+' item'+
+            (data.reimbursement.rows===1?'':'s')+' · '+
+            reimbEsc(data.reimbursement.settlement_id);
+    }
     document.getElementById('done-summary').innerHTML=
-      `${desc} · ${amount}<br>${date} · source: ${ref}`;
+      `${desc} · ${amount}<br>${date} · source: ${ref}${extra}`;
     show('done-view');
   }catch(e){
     showErr('review-err','Commit failed: '+e.message);
@@ -291,6 +531,11 @@ function doReset(){
   document.getElementById('f-settle').checked=false;
   settleTouched=false;
   refreshSettleRow(false);
+  // A committed match consumed rows from the pool — force a re-read next time.
+  reimbPicks={};
+  reimbPool=null;
+  document.getElementById('reimb-wrap').classList.remove('open');
+  refreshReimbVisibility();
   hideErr('form-err');
   hideErr('review-err');
   const btn=document.getElementById('btn-commit');

@@ -87,6 +87,10 @@
     'income_ref',  // payback row RefID(s), 'none', or '' = unlinked. Trailing.
   ];
   var ROONG_CATEGORY = 'With Roong';
+  // Income category whose rows settle unsettled expenses directly at entry time
+  // (2026-07-25 spec). Mirrors run_pipeline.REIMBURSE_CATEGORY / _METHOD.
+  var REIMBURSE_CATEGORY = 'Reimbursement';
+  var REIMBURSE_METHOD = 'reimbursement';
   var ROONG_SETTLEMENTS_PATH = 'roong_settlements.csv';
 
   // Normalize any settle value to the stored form: 'True' or ''.
@@ -753,11 +757,26 @@
       return rows;
     }, 'entry from phone: ' + (payload.Description || '') + ' ' + (payload.Amount || ''),
        DB_COLUMNS);
+    // The row exists now, so its RefID can settle the picked expenses
+    // (2026-07-25 spec §5). A failure here leaves a valid, unlinked income row
+    // and untouched expenses — never a half-stamped state — and is reported
+    // back so the page can offer a retry rather than swallowing it.
+    var reimbursement = null, reimburseError = '';
+    if ((payload.Reimburses || []).length &&
+        String(payload.Category || '').trim() === REIMBURSE_CATEGORY) {
+      try {
+        reimbursement = await matchReimbursement(assignedRef, payload.Reimburses);
+      } catch (e) {
+        reimburseError = (e && e.message) || String(e);
+      }
+    }
     return {
       ok: true,
       row: Object.assign({}, payload, {
         RefID: assignedRef, ReviewedAt: ts, Edited: 'No', Deleted: 'False',
       }),
+      reimbursement: reimbursement,
+      reimburse_error: reimburseError,
     };
   }
 
@@ -1097,6 +1116,159 @@
   }
 
   // -------------------------------------------------------------------------
+  // Reimbursement → settle items (2026-07-25 spec)
+  // -------------------------------------------------------------------------
+
+  // Settle expense rows against a Reimbursement income row. Mirrors
+  // run_pipeline.create_reimbursement_settlement: the record is born already
+  // settled (the money has landed, so there is no pending stage) and is an
+  // ordinary S00N — only confirmed_method marks where it came from, and nothing
+  // reads that for logic.
+  //
+  //   rows          [{RefID, roong_share}]
+  //   settlementId  re-pick that record instead of creating one; with an empty
+  //                 rows list it deletes the record and releases its rows.
+  async function matchReimbursement(incomeRef, rows, settlementId) {
+    incomeRef = String(incomeRef || '').trim();
+    settlementId = String(settlementId || '').trim();
+    var picks = (rows || []).map(function (r) {
+      return { RefID: String(r.RefID || '').trim(),
+               share: parseFloat(r.roong_share) || 0 };
+    });
+    if (!incomeRef) throw new Error('income_ref is required');
+    if (!picks.length && !settlementId) throw new Error('No items selected');
+
+    if (MODE === 'local') {
+      var body = { income_ref: incomeRef, rows: rows || [] };
+      if (settlementId) body.settlement_id = settlementId;
+      var res = await fetch('/api/reimburse/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+      return data;
+    }
+
+    // 1. Settlements first — we need the next id, and the income row must not
+    //    already be claimed as some other settlement's income_ref.
+    var settleGot = await ghGet(ROONG_SETTLEMENTS_PATH);
+    var settleRows = csvToObjects(settleGot.content);
+    if (settlementId) {
+      var target = null;
+      settleRows.forEach(function (s) {
+        if (s.settlement_id === settlementId) target = s;
+      });
+      if (!target) throw new Error('Settlement ' + settlementId + ' not found');
+      if (String(target.confirmed_method || '').trim() !== REIMBURSE_METHOD)
+        throw new Error('Settlement ' + settlementId +
+                        ' is not a reimbursement settlement');
+    }
+    settleRows.forEach(function (s) {
+      if (settlementId && s.settlement_id === settlementId) return;
+      String(s.income_ref || '').split('|').forEach(function (id) {
+        if (id.trim() && id.trim() === incomeRef)
+          throw new Error('RefID ' + incomeRef + ' already settles another settlement');
+      });
+    });
+
+    var sid = settlementId || nextSettlementId(settleRows);
+    var ts = nowHuman();
+    var total = 0;
+
+    // 2. Stamp the DB rows. Validation lives inside the mutator so it runs
+    //    against the rows we are actually about to write — a throw here aborts
+    //    before any commit, and mutateCsv re-runs it on a 409 retry.
+    await mutateCsv('database.csv', function (dbRows) {
+      var byRef = {};
+      dbRows.forEach(function (r) { byRef[String(r.RefID || '').trim()] = r; });
+
+      var income = byRef[incomeRef];
+      if (!income) throw new Error('RefID ' + incomeRef + ' not found');
+      if (String(income.Deleted || '').toLowerCase() === 'true')
+        throw new Error('RefID ' + incomeRef + ' is deleted');
+      if (String(income.Category || '').trim() !== REIMBURSE_CATEGORY)
+        throw new Error('RefID ' + incomeRef + " is not a '" +
+                        REIMBURSE_CATEGORY + "' row");
+
+      // Release the current membership first, so re-ticking a row that is
+      // already in this settlement passes the "unstamped" check below.
+      if (settlementId) {
+        dbRows.forEach(function (r) {
+          if (String(r.settlement_id || '').trim() === settlementId) {
+            r.settlement_id = '';
+            r.roong_share = '';
+          }
+        });
+      }
+
+      total = 0;
+      picks.forEach(function (p) {
+        var row = byRef[p.RefID];
+        if (!row) throw new Error('RefID ' + p.RefID + ' not found');
+        if (String(row.Deleted || '').toLowerCase() === 'true')
+          throw new Error('RefID ' + p.RefID + ' is deleted');
+        if (p.RefID === incomeRef)
+          throw new Error('A reimbursement cannot settle itself');
+        if (row.Category !== ROONG_CATEGORY &&
+            String(row.Settle || '').toLowerCase() !== 'true')
+          throw new Error('RefID ' + p.RefID + " is not a '" + ROONG_CATEGORY +
+                          "' or settle-flagged row");
+        if (String(row.settlement_id || '').trim())
+          throw new Error('RefID ' + p.RefID + ' is already settled (batch ' +
+                          row.settlement_id + ')');
+        var amount = parseFloat(row.Amount) || 0;
+        if (p.share < 0 || p.share > amount)
+          throw new Error('roong_share for ' + p.RefID +
+                          ' must be between 0 and ' + amount);
+        row.settlement_id = sid;
+        row.roong_share = String(p.share);
+        total += p.share;
+      });
+      return dbRows;
+    }, 'reimbursement ' + sid + ': stamp ' + picks.length + ' row(s)', DB_COLUMNS);
+
+    // 3. Write the settlement record (or drop it on an emptied re-pick).
+    var rowIds = picks.map(function (p) { return p.RefID; }).join('|');
+    if (settlementId && !picks.length) {
+      await mutateCsv(ROONG_SETTLEMENTS_PATH, function (sRows) {
+        return sRows.filter(function (r) { return r.settlement_id !== sid; });
+      }, 'reimbursement: remove ' + sid, ROONG_SETTLEMENT_COLUMNS);
+      return { ok: true, settlement_id: sid, requested_amount: 0,
+               rows: 0, deleted: true };
+    }
+    await mutateCsv(ROONG_SETTLEMENTS_PATH, function (sRows) {
+      var found = false;
+      sRows.forEach(function (r) {
+        if (r.settlement_id !== sid) return;
+        found = true;
+        r.requested_amount = String(total);
+        r.row_ids = rowIds;
+        r.confirmed_at = ts;
+      });
+      if (!found) {
+        sRows.push({
+          settlement_id:    sid,
+          created_at:       ts,
+          status:           'settled',
+          requested_amount: String(total),
+          row_ids:          rowIds,
+          slip_file:        '',
+          confirmed_at:     ts,
+          confirmed_method: REIMBURSE_METHOD,
+          income_ref:       incomeRef,
+        });
+      }
+      return sRows;
+    }, 'reimbursement ' + sid + ': settle ' + picks.length + ' row(s)',
+       ROONG_SETTLEMENT_COLUMNS);
+
+    return { ok: true, settlement_id: sid, requested_amount: total,
+             rows: picks.length, deleted: false };
+  }
+
+  // -------------------------------------------------------------------------
   // Slip review (GitHub-native ingestion channel)
   //
   // The phone uploads slip images into budget-data/inbox/; a scheduled GitHub
@@ -1316,6 +1488,7 @@
       };
     });
     var addedCount = newRows.length;
+    var addedRefs = {};          // RefID -> true, for rows that really landed
     if (newRows.length) {
       progress('Committing ' + newRows.length + ' row(s)…');
       await mutateCsv('database.csv', function (rows) {
@@ -1329,8 +1502,36 @@
           return !existing[nr.Date + ' ' + nr.Amount];
         });
         addedCount = toAdd.length;
+        addedRefs = {};          // reset — a 409 retry re-runs this mutator
+        toAdd.forEach(function (nr) { addedRefs[nr.RefID] = true; });
         return rows.concat(toAdd);
       }, 'review from phone: commit confirmed row(s)', DB_COLUMNS);
+    }
+
+    // 1b. Settle each Reimbursement slip's picked expenses (2026-07-25 spec).
+    //     Only for rows that actually landed — the dup guard above may have
+    //     skipped one, and its client-generated RefID would then point at
+    //     nothing. Best-effort, exactly like the Mac's commit_decisions: a
+    //     stale pick must never cost the user the reviewed batch, so failures
+    //     become warnings and the queue cleanup below still runs.
+    var reimburseWarnings = [];
+    for (var ri = 0; ri < confirmed.length; ri++) {
+      var rFields = confirmed[ri].fields || {};
+      var rRef = newRows[ri].RefID;
+      if (String(rFields.Category || '').trim() !== REIMBURSE_CATEGORY) continue;
+      if (!(rFields.Reimburses || []).length) continue;
+      if (!addedRefs[rRef]) {
+        reimburseWarnings.push('"' + (rFields.Description || rRef) +
+          '" was already in the database — its reimbursement was not settled.');
+        continue;
+      }
+      progress('Settling reimbursed items…');
+      try {
+        await matchReimbursement(rRef, rFields.Reimburses);
+      } catch (e) {
+        reimburseWarnings.push(rRef + ': reimbursement not settled — ' +
+                               ((e && e.message) || String(e)));
+      }
     }
 
     // 2. Drop every decided slip from drafts.json, retrying on a SHA race.
@@ -1445,7 +1646,7 @@
     }
 
     return { confirmed: addedCount, rejected: rejected.length,
-             archive_failed: archiveFailed };
+             archive_failed: archiveFailed, warnings: reimburseWarnings };
   }
 
   // triggerOcr — force an OCR run now ("Read slip"), so a freshly-uploaded slip
@@ -1689,6 +1890,7 @@
     linkRoongIncome:     linkRoongIncome,
     unconfirmRoong:      unconfirmRoong,
     cancelRoong:         cancelRoong,
+    matchReimbursement:  matchReimbursement,
 
     loadDrafts:          loadDrafts,
     loadSlipImage:       loadSlipImage,

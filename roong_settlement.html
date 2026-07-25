@@ -142,6 +142,7 @@
   .ls-opt .lo-amt{font-weight:600;white-space:nowrap;}
   .ls-opt.exact .lo-amt{color:var(--green);}
   .ls-diff{font-size:11.5px;color:var(--red);margin:2px 0 6px 27px;}
+  .ls-diff.ok{color:var(--text-soft);}   /* totals line with nothing wrong */
   .ls-empty{font-size:12.5px;color:var(--text-faint);padding:10px 4px;}
   .ls-revert{display:block;width:100%;margin-top:12px;border:1px solid var(--red-border,#f1d6d1);
              background:var(--red-bg);color:var(--red);border-radius:12px;padding:11px;
@@ -263,6 +264,7 @@ let pendingBatches = [];  // [{settlement_id, ...}]
 let lastConfirmed = null; // {settlement_id, created_at, requested_amount, n}
 let dbRows = [];          // full database — payback-row lookups + candidates
 let historyAll = [];      // settled batches (set by loadHistory)
+let inflowCats = {};      // income + saving category names (from /api/config)
 
 // --- Settlement→income link helpers (2026-07-19 spec) ---
 const PAYBACK_CATS = ['Payback from someone', 'Reimbursement'];
@@ -288,6 +290,32 @@ function paybackCandidates(allowSid) {
   ).sort((a, b) => (a.Date || '') < (b.Date || '') ? 1 : -1);
 }
 
+// --- Reimbursement item re-pick (2026-07-25 spec) ---
+const REIMBURSE_CATEGORY = 'Reimbursement';
+const REIMBURSE_METHOD = 'reimbursement';
+
+// A settlement built from a Reimbursement row at entry time. confirmed_method
+// is authoritative; the income_ref category is a fallback for hand-made rows.
+function isReimbursementBatch(batch) {
+  if (String(batch.confirmed_method || '').trim() === REIMBURSE_METHOD) return true;
+  const rows = linkedRows(batch.income_ref);
+  return rows.length === 1 &&
+         (rows[0].Category || '').trim() === REIMBURSE_CATEGORY;
+}
+
+// Rows this settlement could hold: the settle pool (With Roong or Settle=True,
+// not deleted, not an inflow) that is either free or already stamped with sid.
+function itemCandidates(sid) {
+  return dbRows.filter(r =>
+    String(r.Deleted || '').toLowerCase() !== 'true' &&
+    !inflowCats[(r.Category || '').trim()] &&
+    ((r.Category || '').trim() === 'With Roong' ||
+     String(r.Settle || '').toLowerCase() === 'true') &&
+    (!(r.settlement_id || '').trim() ||
+     (r.settlement_id || '').trim() === sid)
+  ).sort((a, b) => (a.Date || '') < (b.Date || '') ? 1 : -1);
+}
+
 // Rows referenced by an income_ref value (skips '' / 'none').
 function linkedRows(incomeRef) {
   const ids = String(incomeRef || '').split('|')
@@ -301,14 +329,18 @@ function linkedRows(incomeRef) {
 // ---------------------------------------------------------------------------
 async function loadAll() {
   try {
-    const [u, p, db] = await Promise.all([
+    const [u, p, db, cfg] = await Promise.all([
       DataSource.loadRoongUnsettled(),
       DataSource.loadRoongPending(),
       DataSource.loadDatabase().catch(() => []),
+      DataSource.loadConfig().catch(() => ({})),
     ]);
     unsettled = mapUnsettled(u);
     pendingBatches = p;
     dbRows = db || [];
+    inflowCats = {};
+    [].concat(cfg.income_categories || [], cfg.saving_categories || [])
+      .forEach(c => { inflowCats[String(c).trim()] = true; });
     render();
   } catch (e) {
     document.getElementById('main-content').innerHTML =
@@ -772,6 +804,192 @@ async function saveLinkSheet() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Reimbursement item sheet — re-pick which expenses a reimbursement settled
+// (2026-07-25 spec). Reuses the .ls sheet styling; its own container so the
+// payment-link sheet's state is untouched.
+// ---------------------------------------------------------------------------
+let itemsState = null;   // {sid, incomeRef, amount, picks:{RefID: share}}
+
+function ensureItemsSheet() {
+  if (document.getElementById('is-back')) return;
+  const back = document.createElement('div');
+  back.className = 'ls-back';
+  back.id = 'is-back';
+  back.innerHTML = `
+    <div class="ls">
+      <h3>Which items did this reimburse?</h3>
+      <div class="ls-sub" id="is-sub"></div>
+      <div id="is-options"></div>
+      <div class="ls-diff" id="is-diff" style="display:none"></div>
+      <div class="ls-actions">
+        <button class="ls-cancel" onclick="closeItemsSheet()">Cancel</button>
+        <button class="ls-save" id="is-save" onclick="saveItemsSheet()">Save</button>
+      </div>
+    </div>`;
+  back.addEventListener('click', e => { if (e.target === back) closeItemsSheet(); });
+  document.body.appendChild(back);
+}
+
+function openItemsSheet(sid) {
+  const batch = historyAll.concat(pendingBatches)
+    .find(s => s.settlement_id === sid);
+  if (!batch) return;
+  const incomeRef = String(batch.income_ref || '').split('|')[0].trim();
+  const incomeRow = dbRows.find(r => String(r.RefID || '').trim() === incomeRef);
+  if (!incomeRef || incomeRef === 'none' || !incomeRow) {
+    showToast('That settlement has no reimbursement row to re-pick against');
+    return;
+  }
+  ensureItemsSheet();
+  const picks = {};
+  dbRows.forEach(r => {
+    if (String(r.settlement_id || '').trim() !== sid) return;
+    if (String(r.Deleted || '').toLowerCase() === 'true') return;
+    // A stamped share of 0 is meaningful ("none of this came back") — read the
+    // raw value rather than falling back to the full amount on a falsy 0.
+    const raw = String(r.roong_share == null ? '' : r.roong_share).trim();
+    picks[String(r.RefID || '').trim()] =
+      raw === '' ? (parseFloat(r.Amount) || 0) : (parseFloat(raw) || 0);
+  });
+  itemsState = { sid, incomeRef, amount: parseFloat(incomeRow.Amount) || 0, picks };
+  document.getElementById('is-sub').textContent =
+    `${sid} · ${escHtml(incomeRow.Description || incomeRef)} · ${fmtBaht(itemsState.amount)}`;
+  renderItemsOptions();
+  document.getElementById('is-back').classList.add('open');
+}
+
+function renderItemsOptions() {
+  const box = document.getElementById('is-options');
+  const cands = itemCandidates(itemsState.sid);
+  if (!cands.length) {
+    box.innerHTML = `<div class="ls-empty">No items available to reimburse.</div>`;
+    refreshItemsDiff();
+    return;
+  }
+  let html = '';
+  cands.forEach(r => {
+    const ref = String(r.RefID || '').trim();
+    const on = Object.prototype.hasOwnProperty.call(itemsState.picks, ref);
+    const amt = parseFloat(r.Amount) || 0;
+    const share = on ? (parseFloat(itemsState.picks[ref]) || 0) : amt;
+    const pct = amt > 0 ? Math.round(share / amt * 100) : 0;
+    html += `
+      <label class="ls-opt">
+        <input type="checkbox" data-ref="${escHtml(ref)}" ${on ? 'checked' : ''}>
+        <span class="lo-main"><span class="lo-desc">${escHtml(r.Description || '')}</span>
+          <div class="lo-meta">${fmtDateShort(r.Date)} · ${escHtml((r.Category || '').trim())}</div>
+        </span>
+        <span class="lo-amt">${fmtBaht(amt)}</span>
+      </label>`;
+    if (on) html += `
+      <div class="share-inputs" style="margin:0 0 8px 27px;">
+        <input type="number" min="0" max="100" step="1" value="${pct}"
+          data-ref="${escHtml(ref)}" data-kind="pct">
+        <span class="share-sep">%  =</span>
+        <input type="number" min="0" step="0.5" value="${share.toFixed(2)}"
+          data-ref="${escHtml(ref)}" data-kind="baht">
+      </div>`;
+  });
+  box.innerHTML = html;
+  wireItemsOptions();
+  refreshItemsDiff();
+}
+
+function itemsTotal() {
+  return Object.keys(itemsState.picks)
+    .reduce((t, k) => t + (parseFloat(itemsState.picks[k]) || 0), 0);
+}
+
+function refreshItemsDiff() {
+  const el = document.getElementById('is-diff');
+  const n = Object.keys(itemsState.picks).length;
+  const total = itemsTotal();
+  const diff = total - itemsState.amount;
+  let txt = `${n} selected · ${fmtBaht(total)}`;
+  let off = false;
+  if (n && Math.abs(diff) >= 0.005) {
+    txt += ` — ${fmtBaht(Math.abs(diff))} ${diff < 0 ? 'less' : 'more'} than the reimbursement`;
+    off = true;
+  }
+  if (!n) { txt += ' — saving will remove this settlement'; off = true; }
+  el.textContent = txt;
+  el.classList.toggle('ok', !off);
+  el.style.display = '';
+}
+
+function wireItemsOptions() {
+  const box = document.getElementById('is-options');
+  box.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const ref = cb.dataset.ref;
+      if (cb.checked) {
+        const row = dbRows.find(r => String(r.RefID || '').trim() === ref);
+        itemsState.picks[ref] = parseFloat(row && row.Amount) || 0;
+      } else {
+        delete itemsState.picks[ref];
+      }
+      renderItemsOptions();
+    });
+  });
+  // In-place so typing a share doesn't drop focus.
+  box.querySelectorAll('input[data-kind]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const ref = inp.dataset.ref;
+      const row = dbRows.find(r => String(r.RefID || '').trim() === ref);
+      const amt = parseFloat(row && row.Amount) || 0;
+      let share;
+      if (inp.dataset.kind === 'pct') {
+        const pct = Math.max(0, Math.min(100, parseFloat(inp.value) || 0));
+        share = amt * pct / 100;
+        const b = box.querySelector(`input[data-kind=baht][data-ref="${ref}"]`);
+        if (b) b.value = share.toFixed(2);
+      } else {
+        share = Math.max(0, Math.min(amt, parseFloat(inp.value) || 0));
+        const p = box.querySelector(`input[data-kind=pct][data-ref="${ref}"]`);
+        if (p) p.value = amt > 0 ? Math.round(share / amt * 100) : 0;
+      }
+      itemsState.picks[ref] = share;
+      refreshItemsDiff();
+    });
+  });
+}
+
+function closeItemsSheet() {
+  const back = document.getElementById('is-back');
+  if (back) back.classList.remove('open');
+  itemsState = null;
+}
+
+async function saveItemsSheet() {
+  if (!itemsState) return;
+  const { sid, incomeRef, amount } = itemsState;
+  const rows = Object.keys(itemsState.picks)
+    .map(ref => ({ RefID: ref, roong_share: parseFloat(itemsState.picks[ref]) || 0 }));
+  if (!rows.length &&
+      !confirm(`Remove ${sid}? Its items go back to the unsettled list and the reimbursement becomes unlinked.`))
+    return;
+  const total = rows.reduce((t, r) => t + r.roong_share, 0);
+  const diff = total - amount;
+  if (rows.length && Math.abs(diff) >= 0.005 &&
+      !confirm(`The selected items total ${fmtBaht(total)}, ${fmtBaht(Math.abs(diff))} ${diff < 0 ? 'less' : 'more'} than the reimbursement.\n\nSave anyway?`))
+    return;
+  const btn = document.getElementById('is-save');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const res = await DataSource.matchReimbursement(incomeRef, rows, sid);
+    closeItemsSheet();
+    showToast(res.deleted ? `${sid} removed` : `${sid} — ${res.rows} item(s) settled`);
+    await loadAll();          // membership moved between sections
+  } catch (e) {
+    showToast('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+}
+
 // Revert a settled settlement to pending (sheet's red button; link/change
 // modes only). The batch returns to the Pending payment section; shares stay
 // stamped on the DB rows and the payment link is cleared.
@@ -867,7 +1085,12 @@ function histLinkHtml(batch) {
   const sid = batch.settlement_id;
   const requested = parseFloat(batch.requested_amount) || 0;
   const ref = String(batch.income_ref || '').trim();
-  const changeBtn = `<button class="link-action" onclick="event.stopPropagation();openLinkSheet('${escHtml(sid)}',${requested},'change')">change…</button>`;
+  const changeBtn = `<button class="link-action" onclick="event.stopPropagation();openLinkSheet('${escHtml(sid)}',${requested},'change')">change…</button>` +
+    // A settlement paid by a Reimbursement row was built by picking items at
+    // entry time (2026-07-25 spec) — let those picks be changed here.
+    (isReimbursementBatch(batch)
+      ? ` <button class="link-action" onclick="event.stopPropagation();openItemsSheet('${escHtml(sid)}')">change items…</button>`
+      : '');
   if (ref === 'none')
     return `<div class="hist-link none">no money movement ${changeBtn}</div>`;
   if (ref) {

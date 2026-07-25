@@ -116,6 +116,38 @@
 .settle-sub{font-size:11px;color:var(--text-faint);margin-top:1px;}
 .settle-row.auto{border-color:var(--green-soft);background:var(--green-soft);}
 .settle-row.auto .settle-sub{color:var(--green);}
+/* Reimbursement picker — settle unsettled items against this income row
+   (2026-07-25 spec). Collapsed by default so the swipe card stays small. */
+.reimb-wrap{margin-top:10px;background:var(--bg);border:1px solid var(--border);
+            border-radius:12px;overflow:hidden;text-align:left;}
+.reimb-head{display:flex;align-items:center;gap:8px;padding:12px 13px;cursor:pointer;
+            user-select:none;-webkit-tap-highlight-color:transparent;}
+.reimb-lab{font-size:14px;color:var(--text);flex:1;}
+.reimb-sum{font-size:12px;color:var(--text-faint);}
+.reimb-chev{font-size:9px;color:var(--text-faint);transition:transform .15s;display:inline-block;}
+.reimb-wrap.open .reimb-chev{transform:rotate(90deg);}
+.reimb-body{display:none;border-top:1px solid var(--border);padding:0 13px 12px;
+            max-height:46vh;overflow-y:auto;}
+.reimb-wrap.open .reimb-body{display:block;}
+.reimb-item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;
+            border-bottom:1px solid var(--border);}
+.reimb-item:last-of-type{border-bottom:none;}
+.reimb-item input[type=checkbox]{width:18px;height:18px;accent-color:var(--green);
+            flex:none;margin-top:2px;}
+.reimb-main{flex:1;min-width:0;}
+.reimb-top{display:flex;justify-content:space-between;gap:8px;}
+.reimb-desc{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.reimb-amt{font-size:13px;font-weight:600;white-space:nowrap;}
+.reimb-meta{font-size:11px;color:var(--text-faint);margin-top:2px;}
+.reimb-share{display:flex;align-items:center;gap:6px;margin-top:8px;}
+.reimb-share input{width:84px;padding:6px 8px;font-size:13px;border:1px solid var(--border);
+            border-radius:8px;background:var(--card,#fff);color:var(--text);
+            -webkit-appearance:none;}
+.reimb-share span{font-size:11px;color:var(--text-faint);}
+.reimb-foot{font-size:12px;color:var(--text-faint);padding-top:10px;
+            border-top:1px solid var(--border);}
+.reimb-diff{color:var(--red);margin-top:6px;}
+.reimb-empty{font-size:12px;color:var(--text-faint);padding:12px 0;}
 </style>
 </head>
 <body>
@@ -208,6 +240,7 @@
         catHtml(s) +
         cardHtml(s) +
         settleHtml(s) +
+        reimburseHtml(s) +
         '<div class="actions">' +
           '<button class="btn btn-ghost" id="skip">Skip</button>' +
           '<button class="btn btn-green btn-ok" id="ok">Looks right ✓</button>' +
@@ -228,6 +261,7 @@
     wireCat(s);
     wireCard(s);
     wireSettle(s);
+    wireReimburse(s);
     wireDecide(s);
     wireSwipe();
   }
@@ -238,6 +272,9 @@
   function applySettleAuto(s) {           // called on every category change
     s.settle = (s.chosen === ROONG_CAT);
     s.settleTouched = false;
+    // Leaving Reimbursement drops any picks — they only mean something for a
+    // reimbursement row, and a stale set would be submitted invisibly.
+    if (s.chosen !== 'Reimbursement') { s.reimburse = {}; s.reimbOpen = false; }
   }
   function settleHtml(s) {
     var auto = s.settle && !s.settleTouched && s.chosen === ROONG_CAT;
@@ -255,6 +292,188 @@
       s.settle = cb.checked;
       s.settleTouched = true;
       render();
+    });
+  }
+
+  // ---- Reimbursement picker (2026-07-25 spec) ----
+  // A slip categorised Reimbursement can settle unsettled expenses. The picks
+  // ride with the decision in submitAll(); the settlement is written as soon as
+  // the row's RefID exists (run_pipeline.create_reimbursement_settlement).
+  var REIMB_CAT = 'Reimbursement';
+  var reimbPool = null;        // null = not loaded yet; [] = loaded and empty
+  var reimbLoading = false;
+
+  function reimbTotal(s) {
+    var picks = s.reimburse || {};
+    return Object.keys(picks).reduce(function (t, k) {
+      return t + (parseFloat(picks[k]) || 0);
+    }, 0);
+  }
+  // RefIDs already claimed by ANOTHER slip in this same batch — two
+  // Reimbursement slips must never settle the same expense.
+  function reimbTakenElsewhere(s) {
+    var taken = {};
+    slips.forEach(function (o) {
+      if (o === s) return;
+      Object.keys(o.reimburse || {}).forEach(function (ref) { taken[ref] = true; });
+    });
+    return taken;
+  }
+  function reimbDate(iso) {
+    try {
+      return new Date(iso + 'T00:00:00')
+        .toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    } catch (e) { return iso || ''; }
+  }
+
+  function reimbEnsurePool(s) {
+    if (reimbPool !== null || reimbLoading) return;
+    reimbLoading = true;
+    DataSource.loadRoongUnsettled().then(function (pool) {
+      // An income/saving row can carry Settle=True today, which would put an
+      // inflow in the pool as if it were an expense. Keep those out of here.
+      reimbPool = pool.filter(function (r) {
+        return !isIncomeCat(r.Category);
+      });
+    }).catch(function () { reimbPool = []; }).then(function () {
+      reimbLoading = false;
+      if (slips[cursor] === s && s.chosen === REIMB_CAT) renderReimbBody(s);
+    });
+  }
+
+  function reimburseHtml(s) {
+    if (s.chosen !== REIMB_CAT) return '';
+    var n = Object.keys(s.reimburse || {}).length;
+    return '<div class="reimb-wrap' + (s.reimbOpen ? ' open' : '') + '" id="reimb-wrap">' +
+      '<div class="reimb-head" id="reimb-head">' +
+        '<span class="reimb-lab">Reimburses</span>' +
+        '<span class="reimb-sum" id="reimb-sum">' +
+          (n ? n + ' · ' + Mock.fmtBaht(reimbTotal(s)) : 'none selected') +
+        '</span><span class="reimb-chev">▶</span></div>' +
+      '<div class="reimb-body" id="reimb-body"></div></div>';
+  }
+
+  // Rendered separately from the card so ticking a box never re-renders (and
+  // re-animates) the whole slip.
+  function renderReimbBody(s) {
+    var body = document.getElementById('reimb-body');
+    if (!body) return;
+    if (reimbPool === null) {
+      body.innerHTML = '<div class="reimb-empty">' +
+        (reimbLoading ? 'Loading unsettled items…' : '') + '</div>';
+      return;
+    }
+    var taken = reimbTakenElsewhere(s);
+    var pool = reimbPool.filter(function (r) { return !taken[String(r.RefID || '')]; });
+    if (!pool.length) {
+      body.innerHTML = '<div class="reimb-empty">Nothing unsettled to reimburse.</div>';
+      return;
+    }
+    var picks = s.reimburse || (s.reimburse = {});
+    var html = '';
+    pool.forEach(function (r) {
+      var ref = String(r.RefID || '');
+      var on = Object.prototype.hasOwnProperty.call(picks, ref);
+      var amt = parseFloat(r.Amount) || 0;
+      var share = on ? (parseFloat(picks[ref]) || 0) : amt;
+      var pct = amt > 0 ? Math.round(share / amt * 100) : 0;
+      html += '<div class="reimb-item">' +
+        '<input type="checkbox" data-ref="' + Mock.escapeHtml(ref) + '"' +
+          (on ? ' checked' : '') + '>' +
+        '<div class="reimb-main">' +
+          '<div class="reimb-top"><span class="reimb-desc">' +
+            Mock.escapeHtml(r.Description || '') + '</span>' +
+            '<span class="reimb-amt">' + Mock.fmtBaht(amt) + '</span></div>' +
+          '<div class="reimb-meta">' + reimbDate(r.Date) + ' · ' +
+            Mock.escapeHtml(r.Category || '') + ' · ' + Mock.escapeHtml(ref) + '</div>' +
+          (on ? '<div class="reimb-share">' +
+            '<input type="number" min="0" max="100" step="1" value="' + pct +
+              '" data-ref="' + Mock.escapeHtml(ref) + '" data-kind="pct">' +
+            '<span>% =</span>' +
+            '<input type="number" min="0" step="0.5" value="' + share.toFixed(2) +
+              '" data-ref="' + Mock.escapeHtml(ref) + '" data-kind="baht">' +
+          '</div>' : '') +
+        '</div></div>';
+    });
+    html += '<div class="reimb-foot" id="reimb-foot"></div>';
+    body.innerHTML = html;
+    wireReimbBody(s);
+    refreshReimbFoot(s);
+  }
+
+  function refreshReimbFoot(s) {
+    var n = Object.keys(s.reimburse || {}).length, total = reimbTotal(s);
+    var sum = document.getElementById('reimb-sum');
+    if (sum) sum.textContent = n ? n + ' · ' + Mock.fmtBaht(total) : 'none selected';
+    var foot = document.getElementById('reimb-foot');
+    if (!foot) return;
+    var amount = parseFloat(s.edit.Amount) || 0;
+    var html = n + ' selected · ' + Mock.fmtBaht(total);
+    var diff = total - amount;
+    if (n && amount > 0 && Math.abs(diff) >= 0.005) {
+      html += '<div class="reimb-diff">' + Mock.fmtBaht(Math.abs(diff)) + ' ' +
+        (diff < 0 ? 'less' : 'more') + ' than the reimbursement — amounts stay as they are</div>';
+    }
+    foot.innerHTML = html;
+  }
+
+  function wireReimbBody(s) {
+    var body = document.getElementById('reimb-body');
+    if (!body) return;
+    body.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var ref = cb.getAttribute('data-ref');
+        if (cb.checked) {
+          var row = reimbPool.filter(function (r) {
+            return String(r.RefID || '') === ref;
+          })[0];
+          s.reimburse[ref] = parseFloat(row && row.Amount) || 0;   // whole thing
+        } else {
+          delete s.reimburse[ref];
+        }
+        renderReimbBody(s);
+      });
+    });
+    // Share edits update in place — re-rendering would drop focus mid-typing.
+    body.querySelectorAll('input[data-kind]').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var ref = inp.getAttribute('data-ref');
+        var row = reimbPool.filter(function (r) {
+          return String(r.RefID || '') === ref;
+        })[0];
+        var amt = parseFloat(row && row.Amount) || 0, share;
+        if (inp.getAttribute('data-kind') === 'pct') {
+          var pct = Math.max(0, Math.min(100, parseFloat(inp.value) || 0));
+          share = amt * pct / 100;
+          var b = body.querySelector('input[data-kind=baht][data-ref="' + ref + '"]');
+          if (b) b.value = share.toFixed(2);
+        } else {
+          share = Math.max(0, Math.min(amt, parseFloat(inp.value) || 0));
+          var p = body.querySelector('input[data-kind=pct][data-ref="' + ref + '"]');
+          if (p) p.value = amt > 0 ? Math.round(share / amt * 100) : 0;
+        }
+        s.reimburse[ref] = share;
+        refreshReimbFoot(s);
+      });
+    });
+  }
+
+  function wireReimburse(s) {
+    if (s.chosen !== REIMB_CAT) return;
+    reimbEnsurePool(s);
+    var head = document.getElementById('reimb-head');
+    if (head) head.addEventListener('click', function () {
+      s.reimbOpen = !s.reimbOpen;
+      var wrap = document.getElementById('reimb-wrap');
+      if (wrap) wrap.classList.toggle('open', !!s.reimbOpen);
+    });
+    renderReimbBody(s);
+  }
+
+  function reimbPayload(s) {
+    var picks = s.reimburse || {};
+    return Object.keys(picks).map(function (ref) {
+      return { RefID: ref, roong_share: parseFloat(picks[ref]) || 0 };
     });
   }
 
@@ -542,9 +761,33 @@
           Note:        s.edit.Note || '',
           Settle:      s.settle ? 'True' : '',
         };
+        var rp = s.chosen === REIMB_CAT ? reimbPayload(s) : [];
+        if (rp.length) dec.fields.Reimburses = rp;
       }
       return dec;
     });
+
+    // Warn once, don't block, when a reimbursement's picks don't add up.
+    var offs = decs.filter(function (d) {
+      return d.fields && (d.fields.Reimburses || []).length;
+    }).map(function (d) {
+      var tot = d.fields.Reimburses.reduce(function (t, p) { return t + p.roong_share; }, 0);
+      return { desc: d.fields.Description || d.filename,
+               diff: tot - (parseFloat(d.fields.Amount) || 0), total: tot };
+    }).filter(function (x) { return Math.abs(x.diff) >= 0.005; });
+    if (offs.length) {
+      var lines = offs.map(function (x) {
+        return '· "' + x.desc + '" — items total ' + Mock.fmtBaht(x.total) + ', ' +
+          Mock.fmtBaht(Math.abs(x.diff)) + ' ' + (x.diff < 0 ? 'less' : 'more') +
+          ' than the reimbursement';
+      }).join('\n');
+      if (!confirm('Some reimbursements don\'t match their selected items:\n\n' +
+                   lines + '\n\nSubmit anyway?')) {
+        btn.disabled = false;
+        btn.textContent = 'Submit ' + okCount + ' slip' + (okCount === 1 ? '' : 's');
+        return;
+      }
+    }
 
     try {
       var data = await DataSource.submitReview(decs, function (txt) {
@@ -558,10 +801,17 @@
         ? ' · ' + data.archive_failed + ' image(s) left in inbox (harmless)' : '';
       var sk = decisions.filter(function (d) { return d.kind === 'skip'; }).length;
       var skTxt = sk ? ' · <b>' + sk + '</b> still in your queue' : '';
+      // Reimbursement legs are best-effort — the rows are committed either way,
+      // so say plainly which ones didn't settle instead of hiding it.
+      var warn = (data && data.warnings || []).map(function (w) {
+        return '<div style="color:var(--red);margin-top:8px">' +
+               Mock.escapeHtml(w) + '</div>';
+      }).join('');
       stage.innerHTML =
         '<div class="slip-card done-box"><h2>Submitted 🎉</h2>' +
           '<div class="sub"><b>' + c + '</b> row' + (c === 1 ? '' : 's') +
-          ' committed · <b>' + r + '</b> rejected' + skTxt + extra + '.</div></div>';
+          ' committed · <b>' + r + '</b> rejected' + skTxt + extra + '.' +
+          warn + '</div></div>';
       document.getElementById('progress').textContent = '';
     } catch (e) {
       window.removeEventListener('beforeunload', blockUnload);
@@ -593,10 +843,12 @@
           '<div class="sub">No slips waiting for review.</div></div>';
         return;
       }
+      reimbPool = null;                                // deck reload → re-read the pool
       slips.forEach(function (s) {
         s.cat0 = fieldVal(s, 'Category') || 'Other';   // blank prediction → neutral, not a wrong "Food"
         s.chosen = s.cat0;
         s.card = fieldVal(s, 'Card') || '';            // auto-selected card (None if blank)
+        s.reimburse = {}; s.reimbOpen = false;         // reimbursement picks (2026-07-25)
         applySettleAuto(s);                            // default: ticked only for With Roong
         s.card0 = s.card;                               // for the `edited` flag
         s.edit = freshEdit(s);
