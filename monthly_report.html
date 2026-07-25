@@ -347,7 +347,7 @@
         var sid = String(r.settlement_id || '').trim();
         if (sid && settledSet[sid]) t.received += share; else t.owed += share;
       }
-      var c = (r.Category || 'Other').trim() || 'Other';
+      var c = (r.Category || 'Other spending').trim() || 'Other spending';
       t.byCat[c] = (t.byCat[c] || 0) + net;
       t.spendRows.push(r);
     });
@@ -495,7 +495,7 @@
       if (Mock.isDeleted(r) || isIncome(r.Category) || isSaving(r.Category)) return;
       var rmk = Mock.monthKey(r.Date);
       if (rmk < startMk || rmk >= mk) return;
-      var c = (r.Category || 'Other').trim() || 'Other';
+      var c = (r.Category || 'Other spending').trim() || 'Other spending';
       (hist[c] = hist[c] || []).push(parseFloat(r.Amount) || 0);
     });
     var med = {};
@@ -507,7 +507,7 @@
     rows.forEach(function (r) {
       if (Mock.isDeleted(r) || Mock.monthKey(r.Date) !== mk) return;
       if (isIncome(r.Category) || isSaving(r.Category)) return;
-      var c = (r.Category || 'Other').trim() || 'Other', amt = parseFloat(r.Amount) || 0;
+      var c = (r.Category || 'Other spending').trim() || 'Other spending', amt = parseFloat(r.Amount) || 0;
       if (med[c] && amt >= 4 * med[c] && amt >= 800)
         out.push({ r: r, mult: Math.round(amt / med[c]), med: med[c] });
     });
@@ -733,7 +733,7 @@
         (items.length ? ' The overshoot is partly the unusual purchase' +
           (items.length > 1 ? 's' : '') + ' below.' : '') + '</div>';
     items.forEach(function (u) {
-      var r = u.r, c = (r.Category || 'Other').trim() || 'Other';
+      var r = u.r, c = (r.Category || 'Other spending').trim() || 'Other spending';
       html += '<div class="att-card odd">' + Mock.catEmoji(c) + ' <b>' + entryDesc(r) +
         ' · ' + fmtBaht0(parseFloat(r.Amount) || 0) + '</b> (' + entryDate(r) + ', ' +
         Mock.escapeHtml(c) + ')<div class="sub">' + u.mult + '× your typical ' +
@@ -909,7 +909,7 @@
     ranked.forEach(function (e, idx) {
       var cat = e[0], amt = e[1], goal = parseFloat(gcats[cat]) || 0;
       var entries = t.spendRows.filter(function (r) {
-        return ((r.Category || 'Other').trim() || 'Other') === cat;
+        return ((r.Category || 'Other spending').trim() || 'Other spending') === cat;
       }).sort(function (a, b) { return String(a.Date) < String(b.Date) ? -1 : 1; });
       var entriesHtml = entries.length ? entries.map(function (r) {
         var tag = '', badge = '', amtHtml;

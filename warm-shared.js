@@ -36,11 +36,13 @@
     'Health / Necessaries': '🩺', 'Shopping': '🛍',
     'Groceries': '🛒', 'Utilities and Subs': '💡',
     'Sports': '🎾', 'Social Expenses / Donation': '🎁',
-    'With Roong': '💛', 'To Mom': '🌺', 'Other': '📦',
+    'With Roong': '💛', 'To Mom': '🌺', 'Other spending': '📦',
     'Salary': '💰', 'Bonus': '🎉', 'Reimbursement': '↩️',
     'Payback from someone': '🤝', 'Provident Fund': '🏦',
     'Mutual Fund': '📈', 'Coop Account': '🏦',
     'Saving for EOY Tax Deduction': '🧾', 'Interest payment': '🪙',
+    'Other income': '💵', 'Other saving': '🐷',
+    'Other': '📦',   // pre-2026-07-25 rows, before the rename to Other spending
   };
   function catEmoji(cat) { return CAT_EMOJI[(cat || '').trim()] || '💸'; }
 
@@ -61,9 +63,9 @@
   // under income_categories, so callers that split buckets must test saving
   // BEFORE income — those rows then land in Saving either way.
   var FALLBACK_INCOME = ['Salary','Bonus','Reimbursement','Payback from someone',
-    'Interest payment'];
+    'Interest payment','Other income'];
   var FALLBACK_SAVING = ['Provident Fund','Mutual Fund','Coop Account',
-    'Saving for EOY Tax Deduction'];
+    'Saving for EOY Tax Deduction','Other saving'];
   function catTester(list, fallback) {
     var set = {};
     (Array.isArray(list) && list.length ? list : fallback)

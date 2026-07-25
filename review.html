@@ -189,11 +189,11 @@
   var CAT_GROUPS = [
     { group: 'Spending', items: ['Food','Drinks and Snacks','Transport','Health / Necessaries',
         'Shopping','Groceries','Utilities and Subs','Sports','Social Expenses / Donation',
-        'With Roong','To Mom','Other'] },
+        'With Roong','To Mom','Other spending'] },
     { group: 'Income', items: ['Salary','Bonus','Reimbursement','Payback from someone',
-        'Interest payment'] },
+        'Interest payment','Other income'] },
     { group: 'Saving', items: ['Provident Fund','Mutual Fund','Coop Account',
-        'Saving for EOY Tax Deduction'] },
+        'Saving for EOY Tax Deduction','Other saving'] },
   ];
   // Income and Saving categories are inflows → "+" in the submit feed; spending → "−".
   var INCOME_CATS = {};
@@ -845,7 +845,7 @@
       }
       reimbPool = null;                                // deck reload → re-read the pool
       slips.forEach(function (s) {
-        s.cat0 = fieldVal(s, 'Category') || 'Other';   // blank prediction → neutral, not a wrong "Food"
+        s.cat0 = fieldVal(s, 'Category') || 'Other spending';   // blank prediction → neutral, not a wrong "Food"
         s.chosen = s.cat0;
         s.card = fieldVal(s, 'Card') || '';            // auto-selected card (None if blank)
         s.reimburse = {}; s.reimbOpen = false;         // reimbursement picks (2026-07-25)
