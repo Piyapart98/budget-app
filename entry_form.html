@@ -258,11 +258,16 @@ document.getElementById('f-cat').addEventListener('change',function(){
   refreshReimbVisibility();
 });
 
-// --- Reimbursement picker (2026-07-25 spec) --------------------------------
-// A Reimbursement row can settle unsettled expenses the moment it is created.
-// The picks ride with the row in doCommit() so the settlement is written as
-// soon as the RefID is assigned — see run_pipeline.create_reimbursement_settlement.
-const REIMB_CAT='Reimbursement';
+// --- Reimbursement / payback picker (2026-07-25 spec; payback 2026-07-31) ----
+// A Reimbursement or "Payback from someone" row can settle unsettled expenses
+// the moment it is created. The picks ride with the row in doCommit() so the
+// settlement is written as soon as the RefID is assigned — see
+// run_pipeline.create_reimbursement_settlement.
+const SETTLE_CATS={
+  'Reimbursement':        {label:'Reimburses', verb:'reimburse', noun:'reimbursement'},
+  'Payback from someone': {label:'Pays back',  verb:'pay back',  noun:'payback'},
+};
+function settleCat(){return SETTLE_CATS[v('f-cat')]||null;}
 let reimbPool=null;     // null = not loaded yet; [] = loaded and empty
 let reimbPicks={};      // RefID -> share in baht
 let reimbLoading=false;
@@ -295,9 +300,13 @@ function inflowCats(){
 }
 
 function refreshReimbVisibility(){
-  const on=v('f-cat')===REIMB_CAT;
-  document.getElementById('reimb-wrap').style.display=on?'':'none';
-  if(!on){reimbPicks={};renderReimb();return;}
+  const cat=settleCat();
+  document.getElementById('reimb-wrap').style.display=cat?'':'none';
+  if(!cat){reimbPicks={};renderReimb();return;}
+  // Both settling categories share one picker; only the wording differs.
+  document.querySelector('#reimb-wrap .reimb-lab').textContent=cat.label;
+  const rl=document.querySelector('#r-reimb-row .review-label');
+  if(rl)rl.textContent=cat.label;
   reimbEnsurePool();
   renderReimb();
 }
@@ -334,7 +343,8 @@ function renderReimb(){
     return;
   }
   if(!reimbPool.length){
-    body.innerHTML='<div class="reimb-empty">Nothing unsettled to reimburse.</div>';
+    body.innerHTML='<div class="reimb-empty">Nothing unsettled to '+
+      ((settleCat()||{}).verb||'settle')+'.</div>';
     return;
   }
   let html='';
@@ -375,7 +385,8 @@ function refreshReimbFoot(){
   const diff=total-amount;
   if(n&&amount>0&&Math.abs(diff)>=0.005){
     html+='<div class="reimb-diff">'+reimbFmt(Math.abs(diff))+' '+
-      (diff<0?'less':'more')+' than the reimbursement — amounts stay as entered</div>';
+      (diff<0?'less':'more')+' than the '+((settleCat()||{}).noun||'income row')+
+      ' — amounts stay as entered</div>';
   }
   foot.innerHTML=html;
   document.getElementById('reimb-sum').textContent=
@@ -470,8 +481,9 @@ async function doCommit(){
   const origText=btn.textContent;
   btn.textContent='Committing…';
 
-  const picks=v('f-cat')===REIMB_CAT?reimbPayload():[];
-  // Warn, don't block, when the picks don't add up to the reimbursement.
+  const cat=settleCat();
+  const picks=cat?reimbPayload():[];
+  // Warn, don't block, when the picks don't add up to the reimbursement/payback.
   if(picks.length){
     const total=picks.reduce((t,p)=>t+p.roong_share,0);
     const amt=parseFloat(v('f-amount'))||0;
@@ -479,7 +491,7 @@ async function doCommit(){
     if(Math.abs(diff)>=0.005&&!confirm(
         'The '+picks.length+' selected item'+(picks.length===1?'':'s')+
         ' total '+reimbFmt(total)+', which is '+reimbFmt(Math.abs(diff))+' '+
-        (diff<0?'less':'more')+' than this reimbursement of '+reimbFmt(amt)+
+        (diff<0?'less':'more')+' than this '+(cat.noun||'reimbursement')+' of '+reimbFmt(amt)+
         '.\n\nCommit anyway?')){
       btn.disabled=false;back.disabled=false;btn.textContent=origText;
       return;
