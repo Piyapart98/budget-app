@@ -290,14 +290,24 @@ function paybackCandidates(allowSid) {
   ).sort((a, b) => (a.Date || '') < (b.Date || '') ? 1 : -1);
 }
 
-// --- Reimbursement item re-pick (2026-07-25 spec) ---
+// --- Item re-pick (2026-07-25 spec; payback 2026-07-31) ---
+// Wording per settling category, and the confirmed_method each one writes.
+const SETTLE_CATS = {
+  'Reimbursement':        { method: 'reimbursement', verb: 'reimburse', noun: 'reimbursement' },
+  'Payback from someone': { method: 'payback',       verb: 'pay back',  noun: 'payback' },
+};
+const SETTLE_METHODS = Object.keys(SETTLE_CATS).map(c => SETTLE_CATS[c].method);
 const REIMBURSE_CATEGORY = 'Reimbursement';
-const REIMBURSE_METHOD = 'reimbursement';
 
-// A settlement built from a Reimbursement row at entry time. confirmed_method
-// is authoritative; the income_ref category is a fallback for hand-made rows.
-function isReimbursementBatch(batch) {
-  if (String(batch.confirmed_method || '').trim() === REIMBURSE_METHOD) return true;
+// A settlement built by picking items at entry time. confirmed_method is
+// authoritative. The category fallback stays Reimbursement-ONLY on purpose: an
+// ordinary Roong settlement is normally confirmed against a "Payback from
+// someone" row, so matching that category here would offer "change items…" on
+// nearly every settled batch — and the server would refuse the re-pick
+// (run_pipeline.create_reimbursement_settlement). Do not widen it.
+function isItemPickedBatch(batch) {
+  if (SETTLE_METHODS.indexOf(String(batch.confirmed_method || '').trim()) !== -1)
+    return true;
   const rows = linkedRows(batch.income_ref);
   return rows.length === 1 &&
          (rows[0].Category || '').trim() === REIMBURSE_CATEGORY;
@@ -809,7 +819,7 @@ async function saveLinkSheet() {
 // (2026-07-25 spec). Reuses the .ls sheet styling; its own container so the
 // payment-link sheet's state is untouched.
 // ---------------------------------------------------------------------------
-let itemsState = null;   // {sid, incomeRef, amount, picks:{RefID: share}}
+let itemsState = null;   // {sid, incomeRef, amount, picks:{RefID: share}, noun, verb}
 
 function ensureItemsSheet() {
   if (document.getElementById('is-back')) return;
@@ -838,7 +848,7 @@ function openItemsSheet(sid) {
   const incomeRef = String(batch.income_ref || '').split('|')[0].trim();
   const incomeRow = dbRows.find(r => String(r.RefID || '').trim() === incomeRef);
   if (!incomeRef || incomeRef === 'none' || !incomeRow) {
-    showToast('That settlement has no reimbursement row to re-pick against');
+    showToast('That settlement has no income row to re-pick against');
     return;
   }
   ensureItemsSheet();
@@ -852,9 +862,14 @@ function openItemsSheet(sid) {
     picks[String(r.RefID || '').trim()] =
       raw === '' ? (parseFloat(r.Amount) || 0) : (parseFloat(raw) || 0);
   });
-  itemsState = { sid, incomeRef, amount: parseFloat(incomeRow.Amount) || 0, picks };
+  const wording = SETTLE_CATS[String(incomeRow.Category || '').trim()] ||
+                  SETTLE_CATS[REIMBURSE_CATEGORY];
+  itemsState = { sid, incomeRef, amount: parseFloat(incomeRow.Amount) || 0,
+                 picks, noun: wording.noun, verb: wording.verb };
   document.getElementById('is-sub').textContent =
     `${sid} · ${escHtml(incomeRow.Description || incomeRef)} · ${fmtBaht(itemsState.amount)}`;
+  document.querySelector('#is-back h3').textContent =
+    `Which items did this ${wording.verb}?`;
   renderItemsOptions();
   document.getElementById('is-back').classList.add('open');
 }
@@ -863,7 +878,7 @@ function renderItemsOptions() {
   const box = document.getElementById('is-options');
   const cands = itemCandidates(itemsState.sid);
   if (!cands.length) {
-    box.innerHTML = `<div class="ls-empty">No items available to reimburse.</div>`;
+    box.innerHTML = `<div class="ls-empty">No items available to ${itemsState.verb}.</div>`;
     refreshItemsDiff();
     return;
   }
@@ -909,7 +924,7 @@ function refreshItemsDiff() {
   let txt = `${n} selected · ${fmtBaht(total)}`;
   let off = false;
   if (n && Math.abs(diff) >= 0.005) {
-    txt += ` — ${fmtBaht(Math.abs(diff))} ${diff < 0 ? 'less' : 'more'} than the reimbursement`;
+    txt += ` — ${fmtBaht(Math.abs(diff))} ${diff < 0 ? 'less' : 'more'} than the ${itemsState.noun}`;
     off = true;
   }
   if (!n) { txt += ' — saving will remove this settlement'; off = true; }
@@ -963,16 +978,16 @@ function closeItemsSheet() {
 
 async function saveItemsSheet() {
   if (!itemsState) return;
-  const { sid, incomeRef, amount } = itemsState;
+  const { sid, incomeRef, amount, noun } = itemsState;
   const rows = Object.keys(itemsState.picks)
     .map(ref => ({ RefID: ref, roong_share: parseFloat(itemsState.picks[ref]) || 0 }));
   if (!rows.length &&
-      !confirm(`Remove ${sid}? Its items go back to the unsettled list and the reimbursement becomes unlinked.`))
+      !confirm(`Remove ${sid}? Its items go back to the unsettled list and the ${noun} becomes unlinked.`))
     return;
   const total = rows.reduce((t, r) => t + r.roong_share, 0);
   const diff = total - amount;
   if (rows.length && Math.abs(diff) >= 0.005 &&
-      !confirm(`The selected items total ${fmtBaht(total)}, ${fmtBaht(Math.abs(diff))} ${diff < 0 ? 'less' : 'more'} than the reimbursement.\n\nSave anyway?`))
+      !confirm(`The selected items total ${fmtBaht(total)}, ${fmtBaht(Math.abs(diff))} ${diff < 0 ? 'less' : 'more'} than the ${noun}.\n\nSave anyway?`))
     return;
   const btn = document.getElementById('is-save');
   btn.disabled = true;
@@ -1086,9 +1101,9 @@ function histLinkHtml(batch) {
   const requested = parseFloat(batch.requested_amount) || 0;
   const ref = String(batch.income_ref || '').trim();
   const changeBtn = `<button class="link-action" onclick="event.stopPropagation();openLinkSheet('${escHtml(sid)}',${requested},'change')">change…</button>` +
-    // A settlement paid by a Reimbursement row was built by picking items at
-    // entry time (2026-07-25 spec) — let those picks be changed here.
-    (isReimbursementBatch(batch)
+    // A settlement built by picking items at entry time (2026-07-25 spec;
+    // payback 2026-07-31) — let those picks be changed here.
+    (isItemPickedBatch(batch)
       ? ` <button class="link-action" onclick="event.stopPropagation();openItemsSheet('${escHtml(sid)}')">change items…</button>`
       : '');
   if (ref === 'none')
