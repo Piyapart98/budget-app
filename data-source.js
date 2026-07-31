@@ -1531,14 +1531,14 @@
       if (!(rFields.Reimburses || []).length) continue;
       if (!addedRefs[rRef]) {
         reimburseWarnings.push('"' + (rFields.Description || rRef) +
-          '" was already in the database — its reimbursement was not settled.');
+          '" was already in the database — items not settled.');
         continue;
       }
-      progress('Settling reimbursed items…');
+      progress('Settling items…');
       try {
         await matchReimbursement(rRef, rFields.Reimburses);
       } catch (e) {
-        reimburseWarnings.push(rRef + ': reimbursement not settled — ' +
+        reimburseWarnings.push(rRef + ': items not settled — ' +
                                ((e && e.message) || String(e)));
       }
     }

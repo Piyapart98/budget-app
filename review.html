@@ -781,15 +781,17 @@
     }).map(function (d) {
       var tot = d.fields.Reimburses.reduce(function (t, p) { return t + p.roong_share; }, 0);
       return { desc: d.fields.Description || d.filename,
-               diff: tot - (parseFloat(d.fields.Amount) || 0), total: tot };
+               diff: tot - (parseFloat(d.fields.Amount) || 0), total: tot,
+               cat: d.fields.Category };
     }).filter(function (x) { return Math.abs(x.diff) >= 0.005; });
     if (offs.length) {
       var lines = offs.map(function (x) {
+        var noun = (SETTLE_CATS[x.cat] || {}).noun || 'settlement';
         return '· "' + x.desc + '" — items total ' + Mock.fmtBaht(x.total) + ', ' +
           Mock.fmtBaht(Math.abs(x.diff)) + ' ' + (x.diff < 0 ? 'less' : 'more') +
-          ' than the reimbursement';
+          ' than the ' + noun;
       }).join('\n');
-      if (!confirm('Some reimbursements don\'t match their selected items:\n\n' +
+      if (!confirm('Some items don\'t match their selected settlements:\n\n' +
                    lines + '\n\nSubmit anyway?')) {
         btn.disabled = false;
         btn.textContent = 'Submit ' + okCount + ' slip' + (okCount === 1 ? '' : 's');
