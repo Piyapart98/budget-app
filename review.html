@@ -272,9 +272,9 @@
   function applySettleAuto(s) {           // called on every category change
     s.settle = (s.chosen === ROONG_CAT);
     s.settleTouched = false;
-    // Leaving Reimbursement drops any picks — they only mean something for a
-    // reimbursement row, and a stale set would be submitted invisibly.
-    if (s.chosen !== 'Reimbursement') { s.reimburse = {}; s.reimbOpen = false; }
+    // Leaving the settling categories drops any picks — they only mean something
+    // for a row that settles items, and a stale set would be submitted invisibly.
+    if (!SETTLE_CATS[s.chosen]) { s.reimburse = {}; s.reimbOpen = false; }
   }
   function settleHtml(s) {
     var auto = s.settle && !s.settleTouched && s.chosen === ROONG_CAT;
@@ -295,11 +295,15 @@
     });
   }
 
-  // ---- Reimbursement picker (2026-07-25 spec) ----
-  // A slip categorised Reimbursement can settle unsettled expenses. The picks
-  // ride with the decision in submitAll(); the settlement is written as soon as
-  // the row's RefID exists (run_pipeline.create_reimbursement_settlement).
-  var REIMB_CAT = 'Reimbursement';
+  // ---- Reimbursement / payback picker (2026-07-25 spec; payback 2026-07-31) ----
+  // A slip categorised Reimbursement or "Payback from someone" can settle
+  // unsettled expenses. The picks ride with the decision in submitAll(); the
+  // settlement is written as soon as the row's RefID exists
+  // (run_pipeline.create_reimbursement_settlement).
+  var SETTLE_CATS = {
+    'Reimbursement':        { label: 'Reimburses', verb: 'reimburse', noun: 'reimbursement' },
+    'Payback from someone': { label: 'Pays back',  verb: 'pay back',  noun: 'payback' },
+  };
   var reimbPool = null;        // null = not loaded yet; [] = loaded and empty
   var reimbLoading = false;
 
@@ -337,16 +341,17 @@
       });
     }).catch(function () { reimbPool = []; }).then(function () {
       reimbLoading = false;
-      if (slips[cursor] === s && s.chosen === REIMB_CAT) renderReimbBody(s);
+      if (slips[cursor] === s && SETTLE_CATS[s.chosen]) renderReimbBody(s);
     });
   }
 
   function reimburseHtml(s) {
-    if (s.chosen !== REIMB_CAT) return '';
+    var cat = SETTLE_CATS[s.chosen];
+    if (!cat) return '';
     var n = Object.keys(s.reimburse || {}).length;
     return '<div class="reimb-wrap' + (s.reimbOpen ? ' open' : '') + '" id="reimb-wrap">' +
       '<div class="reimb-head" id="reimb-head">' +
-        '<span class="reimb-lab">Reimburses</span>' +
+        '<span class="reimb-lab">' + cat.label + '</span>' +
         '<span class="reimb-sum" id="reimb-sum">' +
           (n ? n + ' · ' + Mock.fmtBaht(reimbTotal(s)) : 'none selected') +
         '</span><span class="reimb-chev">▶</span></div>' +
@@ -366,7 +371,8 @@
     var taken = reimbTakenElsewhere(s);
     var pool = reimbPool.filter(function (r) { return !taken[String(r.RefID || '')]; });
     if (!pool.length) {
-      body.innerHTML = '<div class="reimb-empty">Nothing unsettled to reimburse.</div>';
+      body.innerHTML = '<div class="reimb-empty">Nothing unsettled to ' +
+        ((SETTLE_CATS[s.chosen] || {}).verb || 'settle') + '.</div>';
       return;
     }
     var picks = s.reimburse || (s.reimburse = {});
@@ -412,7 +418,9 @@
     var diff = total - amount;
     if (n && amount > 0 && Math.abs(diff) >= 0.005) {
       html += '<div class="reimb-diff">' + Mock.fmtBaht(Math.abs(diff)) + ' ' +
-        (diff < 0 ? 'less' : 'more') + ' than the reimbursement — amounts stay as they are</div>';
+        (diff < 0 ? 'less' : 'more') + ' than the ' +
+        ((SETTLE_CATS[s.chosen] || {}).noun || 'income row') +
+        ' — amounts stay as they are</div>';
     }
     foot.innerHTML = html;
   }
@@ -459,7 +467,7 @@
   }
 
   function wireReimburse(s) {
-    if (s.chosen !== REIMB_CAT) return;
+    if (!SETTLE_CATS[s.chosen]) return;
     reimbEnsurePool(s);
     var head = document.getElementById('reimb-head');
     if (head) head.addEventListener('click', function () {
@@ -761,7 +769,7 @@
           Note:        s.edit.Note || '',
           Settle:      s.settle ? 'True' : '',
         };
-        var rp = s.chosen === REIMB_CAT ? reimbPayload(s) : [];
+        var rp = SETTLE_CATS[s.chosen] ? reimbPayload(s) : [];
         if (rp.length) dec.fields.Reimburses = rp;
       }
       return dec;
