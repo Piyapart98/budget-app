@@ -87,8 +87,13 @@
     'income_ref',  // payback row RefID(s), 'none', or '' = unlinked. Trailing.
   ];
   var ROONG_CATEGORY = 'With Roong';
-  // Income category whose rows settle unsettled expenses directly at entry time
-  // (2026-07-25 spec). Mirrors run_pipeline.REIMBURSE_CATEGORY / _METHOD.
+  // Income categories whose rows settle unsettled expenses directly at entry
+  // time. Mirrors run_pipeline.SETTLING_INCOME_CATEGORIES — category name to the
+  // confirmed_method the settlement it creates is stamped with.
+  var SETTLING_CATEGORIES = {
+    'Reimbursement':        'reimbursement',
+    'Payback from someone': 'payback',
+  };
   var REIMBURSE_CATEGORY = 'Reimbursement';
   var REIMBURSE_METHOD = 'reimbursement';
   var ROONG_SETTLEMENTS_PATH = 'roong_settlements.csv';
@@ -763,7 +768,7 @@
     // back so the page can offer a retry rather than swallowing it.
     var reimbursement = null, reimburseError = '';
     if ((payload.Reimburses || []).length &&
-        String(payload.Category || '').trim() === REIMBURSE_CATEGORY) {
+        SETTLING_CATEGORIES[String(payload.Category || '').trim()]) {
       try {
         reimbursement = await matchReimbursement(assignedRef, payload.Reimburses);
       } catch (e) {
@@ -1161,9 +1166,12 @@
         if (s.settlement_id === settlementId) target = s;
       });
       if (!target) throw new Error('Settlement ' + settlementId + ' not found');
-      if (String(target.confirmed_method || '').trim() !== REIMBURSE_METHOD)
+      var known = Object.keys(SETTLING_CATEGORIES).map(function (c) {
+        return SETTLING_CATEGORIES[c];
+      });
+      if (known.indexOf(String(target.confirmed_method || '').trim()) === -1)
         throw new Error('Settlement ' + settlementId +
-                        ' is not a reimbursement settlement');
+                        ' was not built by picking items');
     }
     settleRows.forEach(function (s) {
       if (settlementId && s.settlement_id === settlementId) return;
@@ -1175,7 +1183,7 @@
 
     var sid = settlementId || nextSettlementId(settleRows);
     var ts = nowHuman();
-    var total = 0;
+    var total = 0, method = '';
 
     // 2. Stamp the DB rows. Validation lives inside the mutator so it runs
     //    against the rows we are actually about to write — a throw here aborts
@@ -1188,9 +1196,10 @@
       if (!income) throw new Error('RefID ' + incomeRef + ' not found');
       if (String(income.Deleted || '').toLowerCase() === 'true')
         throw new Error('RefID ' + incomeRef + ' is deleted');
-      if (String(income.Category || '').trim() !== REIMBURSE_CATEGORY)
-        throw new Error('RefID ' + incomeRef + " is not a '" +
-                        REIMBURSE_CATEGORY + "' row");
+      method = SETTLING_CATEGORIES[String(income.Category || '').trim()];
+      if (!method)
+        throw new Error('RefID ' + incomeRef + ' is not a row that can settle ' +
+                        'items (' + Object.keys(SETTLING_CATEGORIES).join(', ') + ')');
 
       // Release the current membership first, so re-ticking a row that is
       // already in this settlement passes the "unstamped" check below.
@@ -1210,7 +1219,7 @@
         if (String(row.Deleted || '').toLowerCase() === 'true')
           throw new Error('RefID ' + p.RefID + ' is deleted');
         if (p.RefID === incomeRef)
-          throw new Error('A reimbursement cannot settle itself');
+          throw new Error('A row cannot settle itself');
         if (row.Category !== ROONG_CATEGORY &&
             String(row.Settle || '').toLowerCase() !== 'true')
           throw new Error('RefID ' + p.RefID + " is not a '" + ROONG_CATEGORY +
@@ -1256,7 +1265,7 @@
           row_ids:          rowIds,
           slip_file:        '',
           confirmed_at:     ts,
-          confirmed_method: REIMBURSE_METHOD,
+          confirmed_method: method,
           income_ref:       incomeRef,
         });
       }
@@ -1518,7 +1527,7 @@
     for (var ri = 0; ri < confirmed.length; ri++) {
       var rFields = confirmed[ri].fields || {};
       var rRef = newRows[ri].RefID;
-      if (String(rFields.Category || '').trim() !== REIMBURSE_CATEGORY) continue;
+      if (!SETTLING_CATEGORIES[String(rFields.Category || '').trim()]) continue;
       if (!(rFields.Reimburses || []).length) continue;
       if (!addedRefs[rRef]) {
         reimburseWarnings.push('"' + (rFields.Description || rRef) +
