@@ -371,6 +371,75 @@
   }
 
   // -------------------------------------------------------------------------
+  // Changelog durability (GitHub mode)
+  //
+  // Every write here is two commits: database.csv first, then changelog.csv. If
+  // the second one fails — a cellular stall hitting ghFetch's 30s timeout, or a
+  // SHA conflict that outlasts three retries — the ledger has already changed
+  // with no reason recorded, and the error the user sees ("Could not update
+  // changelog.csv") reads as though nothing was saved at all. Both halves of
+  // that are bad: it breaks the rule that every edit carries a reason, and it
+  // invites a re-do that double-applies the edit.
+  //
+  // So entries are parked in localStorage BEFORE the network is touched and are
+  // only dropped once the write lands. Anything left behind rides along with the
+  // next successful changelog write, so the audit trail heals itself instead of
+  // losing rows. The extra _qid key is ignored by objectsToCsv, which only
+  // serialises CHANGELOG_COLUMNS.
+  // -------------------------------------------------------------------------
+  var CHANGELOG_QUEUE_KEY = 'budget_pending_changelog_v1';
+  var _qseq = 0;
+
+  function readChangelogQueue() {
+    try { return JSON.parse(localStorage.getItem(CHANGELOG_QUEUE_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+  function writeChangelogQueue(list) {
+    try {
+      if (list && list.length) localStorage.setItem(CHANGELOG_QUEUE_KEY, JSON.stringify(list));
+      else localStorage.removeItem(CHANGELOG_QUEUE_KEY);
+    } catch (e) { /* private mode / quota — nothing we can do, don't break the write */ }
+  }
+  function pendingChangelogCount() { return readChangelogQueue().length; }
+
+  /**
+   * Append entries to changelog.csv, carrying any previously-stranded ones.
+   * Throws with `changelogPending = true` if the write fails AFTER the ledger
+   * has already been changed, so callers can say so plainly.
+   */
+  async function writeChangelogEntries(entries, message) {
+    if (!entries || !entries.length) return;
+    entries.forEach(function (e) {
+      e._qid = String(Date.now()) + '-' + (++_qseq) + '-' +
+               Math.random().toString(36).slice(2, 8);
+    });
+
+    var queued = readChangelogQueue().concat(entries);
+    writeChangelogQueue(queued);          // durable before anything can fail
+
+    try {
+      // `queued` is a stable array, so a mutateCsv retry re-concats exactly the
+      // same rows onto freshly-fetched ones — no duplication.
+      await mutateCsv('changelog.csv', function (rows) {
+        return rows.concat(queued);
+      }, message, CHANGELOG_COLUMNS);
+    } catch (e) {
+      var err = new Error(
+        'Saved to the ledger, but the change-log entry could not be written (' +
+        e.message + '). It is queued and will be recorded with your next edit.');
+      err.changelogPending = true;
+      throw err;
+    }
+
+    // Drop only what we just wrote — another tab may have queued more meanwhile.
+    var written = {};
+    queued.forEach(function (e) { written[e._qid] = true; });
+    writeChangelogQueue(readChangelogQueue().filter(function (e) {
+      return !written[e._qid];
+    }));
+  }
+
+  // -------------------------------------------------------------------------
   // Shared helpers used in both modes
   // -------------------------------------------------------------------------
 
@@ -811,18 +880,15 @@
       return rows;
     }, 'edit from phone: ' + payload.RefID + ' ' + payload.Field, DB_COLUMNS);
 
-    await mutateCsv('changelog.csv', function (rows) {
-      rows.push({
-        Timestamp: ts,
-        RefID:     payload.RefID,
-        Action:    'edit',
-        Field:     payload.Field,
-        OldValue:  oldVal,
-        NewValue:  payload.NewValue,
-        Reason:    payload.Reason,
-      });
-      return rows;
-    }, 'changelog: edit ' + payload.RefID, CHANGELOG_COLUMNS);
+    await writeChangelogEntries([{
+      Timestamp: ts,
+      RefID:     payload.RefID,
+      Action:    'edit',
+      Field:     payload.Field,
+      OldValue:  oldVal,
+      NewValue:  payload.NewValue,
+      Reason:    payload.Reason,
+    }], 'changelog: edit ' + payload.RefID);
 
     return { ok: true };
   }
@@ -925,10 +991,7 @@
 
     if (!logEntries.length) return { ok: true, rows: 0, fields: 0 };
 
-    var pending = logEntries.slice();      // frozen: the changelog mutator may
-    await mutateCsv('changelog.csv', function (rows) {   // also be retried
-      return rows.concat(pending);
-    }, 'changelog: batch edit', CHANGELOG_COLUMNS);
+    await writeChangelogEntries(logEntries.slice(), 'changelog: batch edit');
 
     return { ok: true, rows: Object.keys(touched).length, fields: logEntries.length };
   }
@@ -958,18 +1021,15 @@
       return rows;
     }, 'delete from phone: ' + payload.RefID, DB_COLUMNS);
 
-    await mutateCsv('changelog.csv', function (rows) {
-      rows.push({
-        Timestamp: ts,
-        RefID:     payload.RefID,
-        Action:    'delete',
-        Field:     '',
-        OldValue:  '',
-        NewValue:  '',
-        Reason:    payload.Reason,
-      });
-      return rows;
-    }, 'changelog: delete ' + payload.RefID, CHANGELOG_COLUMNS);
+    await writeChangelogEntries([{
+      Timestamp: ts,
+      RefID:     payload.RefID,
+      Action:    'delete',
+      Field:     '',
+      OldValue:  '',
+      NewValue:  '',
+      Reason:    payload.Reason,
+    }], 'changelog: delete ' + payload.RefID);
 
     return { ok: true };
   }
@@ -2018,6 +2078,11 @@
     removeStatement:     removeStatement,
     latestVerifyRun:     latestVerifyRun,
     finalizeVerifiedCard: finalizeVerifiedCard,
+
+    // How many change-log rows are stranded from a failed write. 0 normally;
+    // anything else means a ledger change is recorded but not yet logged, and
+    // the next successful edit will carry it.
+    pendingChangelogCount: pendingChangelogCount,
 
     resetToken:          resetToken,
     resetActionsToken:   resetActionsToken,
