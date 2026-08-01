@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>Budget</title>
+<link rel="stylesheet" href="v2.css">
+</head>
+<body>
+<div class="wrap pt">
+  <div class="row" style="align-items:flex-start">
+    <div class="grow">
+      <div class="app-h1" id="greet">&nbsp;</div>
+      <div class="app-sub" id="dateline"></div>
+    </div>
+    <a class="iconbtn" href="log.html" id="searchbtn" aria-label="Search the log"></a>
+  </div>
+
+  <div class="hero" style="margin-top:14px">
+    <div class="lab"><span>Really spent · <span id="mlabel"></span></span><span id="hpct"></span></div>
+    <div class="big" id="hspent">฿0</div>
+    <div class="bar"><div id="hbar" style="width:0%"></div></div>
+    <div class="note"><span id="hleft"></span><span id="hdays"></span></div>
+  </div>
+
+  <div class="sect">Needs you</div>
+  <div class="attn" id="attn"><div class="soft-note">Loading…</div></div>
+
+  <div class="sect">Go to</div>
+  <div class="hub" id="hub"></div>
+
+  <div class="sect">Upcoming<a class="act" href="../index.html">Edit</a></div>
+  <div id="upcoming"><div class="soft-note">Loading…</div></div>
+
+  <div class="sect">Recent<a class="act" href="log.html">Open log</a></div>
+  <div id="recent"><div class="soft-note">Loading…</div></div>
+  <p class="faint center" style="margin-top:8px">Tap a row to edit it here — no page change.</p>
+
+  <div class="sect">Navigation</div>
+  <div class="card">
+    <p class="faint" style="margin-bottom:10px">Two layouts are shipping side by side
+      so you can live with each before we keep one.</p>
+    <div class="seg" id="navtoggle" style="margin-bottom:0">
+      <button data-nav="tab">A · Tab bar</button>
+      <button data-nav="hub">B · Hub + Add button</button>
+    </div>
+    <p class="faint" id="navhint" style="margin-top:9px"></p>
+  </div>
+
+  <a class="livelink" href="../index.html"><u>Open the current home page</u></a>
+</div>
+
+<script src="../warm-shared.js"></script>
+<script src="../data-source.js"></script>
+<script src="v2-shared.js"></script>
+<script>
+(function () {
+  'use strict';
+  var esc = V2.esc;
+  var DAY = 86400000;
+  var SOON = 5;    // red styling within this many days   (matches ../index.html)
+  var ACT  = 14;   // Mark-paid button window             (matches ../index.html)
+
+  // ---- date helpers, ported verbatim from ../index.html so the Upcoming list
+  // ---- computes exactly the same dates as the live home.
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function midnight(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function isoOf(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function parseISO(s) { var p = String(s).split('-'); return new Date(+p[0], (+p[1]) - 1, +p[2]); }
+  function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+  function occ(day, y, m) { return new Date(y, m, Math.min(day, daysInMonth(y, m))); }
+  function firstOnOrAfter(day, from) {
+    var y = from.getFullYear(), m = from.getMonth(), c = occ(day, y, m);
+    if (c < from) { m++; if (m > 11) { m = 0; y++; } c = occ(day, y, m); }
+    return c;
+  }
+  function firstStrictlyAfter(day, from) {
+    var y = from.getFullYear(), m = from.getMonth(), c = occ(day, y, m);
+    while (c <= from) { m++; if (m > 11) { m = 0; y++; } c = occ(day, y, m); }
+    return c;
+  }
+  function prevOnOrBefore(day, today) {
+    var y = today.getFullYear(), m = today.getMonth(), c = occ(day, y, m);
+    while (c > today) { m--; if (m < 0) { m = 11; y--; } c = occ(day, y, m); }
+    return c;
+  }
+  function fmtDue(d) {
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+  var TODAY = midnight(new Date());
+
+  var S = { rows: [], cfg: null, groups: null, cycles: {}, rems: [], cards: [] };
+
+  function fillCycle(s, dueDay, paidFor) {
+    if (dueDay) {
+      s.dueTarget = paidFor ? firstStrictlyAfter(dueDay, parseISO(paidFor))
+                            : firstOnOrAfter(dueDay, TODAY);
+    } else { s.kind = 'set'; s.sortKey = 1e9; return s; }
+
+    s.days = Math.round((midnight(s.dueTarget) - TODAY) / DAY);
+    var prevISO = isoOf(prevOnOrBefore(dueDay, TODAY));
+    var paidDisplay = paidFor && paidFor >= prevISO && s.days > ACT;
+
+    if (paidDisplay)         { s.kind = 'paid';     s.sortKey = 1e8 + s.days; }
+    else if (s.days < 0)     { s.kind = 'overdue';  s.sortKey = s.days; }
+    else if (s.days <= SOON) { s.kind = 'promoted'; s.sortKey = s.days; }
+    else                     { s.kind = 'calm';     s.sortKey = s.days; }
+    return s;
+  }
+
+  function upcomingStates() {
+    var out = [];
+    S.cards.forEach(function (c) {
+      var cy = S.cycles[c.last4] || {};
+      var dueDay = (cy.due_day != null && cy.due_day !== '') ? Number(cy.due_day) : null;
+      out.push(fillCycle({ type: 'card', key: c.last4, name: c.name || ('*' + c.last4),
+                           emoji: '💳', dueDay: dueDay }, dueDay, cy.paid_for || null));
+    });
+    S.rems.forEach(function (r) {
+      var dueDay = (r.due_day != null && r.due_day !== '') ? Number(r.due_day) : null;
+      out.push(fillCycle({ type: 'rem', key: String(r.id), name: r.name || '(unnamed)',
+                           emoji: r.emoji || '🔁', dueDay: dueDay }, dueDay, r.paid_for || null));
+    });
+    return out.sort(function (a, b) { return a.sortKey - b.sortKey; });
+  }
+
+  function renderUpcoming() {
+    var states = upcomingStates();
+    var host = document.getElementById('upcoming');
+    if (!states.length) { host.innerHTML = '<div class="soft-note">Nothing scheduled.</div>'; return; }
+    host.innerHTML = states.map(function (s) {
+      var right;
+      if (s.kind === 'set') {
+        right = '<a class="chip tap plain" href="../index.html">Set due day &rsaquo;</a>';
+      } else if (s.kind === 'paid') {
+        right = '<span class="chip ok">' + V2.icon('check','sm') + ' paid</span>';
+      } else {
+        var when = s.days < 0 ? Math.abs(s.days) + ' days late'
+                 : s.days === 0 ? 'today' : 'in ' + s.days + ' days';
+        right = '<span class="chip ' + (s.days <= SOON ? 'bad' : 'plain') + '">' + when + '</span>' +
+                (s.days <= ACT ? '<button class="btn btn-out btn-sm" data-paid="' + s.type +
+                                 ':' + esc(s.key) + '">Paid</button>' : '');
+      }
+      var sub = s.kind === 'set' ? 'no due day set'
+              : (s.kind === 'paid' ? 'next due ' : 'due ') + fmtDue(s.dueTarget);
+      return '<div class="due"' + (s.kind === 'paid' ? ' style="opacity:.62"' : '') + '>' +
+        '<span class="em">' + s.emoji + '</span>' +
+        '<div class="grow"><div style="font-weight:650" class="trunc">' + esc(s.name) + '</div>' +
+        '<div class="faint">' + sub + '</div></div>' + right + '</div>';
+    }).join('');
+  }
+
+  async function markPaid(type, key) {
+    var today = isoOf(TODAY);
+    try {
+      V2.busy('Marking paid…');
+      if (type === 'card') {
+        var cy = S.cycles[key] || {};
+        await DataSource.saveCardCycle(key, { due_day: cy.due_day, paid_for: today });
+        S.cycles[key] = Object.assign({}, cy, { paid_for: today });
+      } else {
+        var rem = S.rems.filter(function (r) { return String(r.id) === key; })[0];
+        if (!rem) return;
+        var patch = Object.assign({}, rem, { paid_for: today });
+        await DataSource.saveUtility(patch);
+        rem.paid_for = today;
+      }
+      renderUpcoming();
+      V2.toast('Marked paid');
+    } catch (e) {
+      V2.toast('Could not save: ' + e.message);
+    }
+  }
+
+  function renderRecent() {
+    var recent = S.rows.slice(0, 5);
+    document.getElementById('recent').innerHTML =
+      '<div class="feed">' + recent.map(function (r) {
+        var inc = S.groups.isIncome(r.Category), sav = S.groups.isSaving(r.Category);
+        return '<button class="feedrow" data-ref="' + esc(r.RefID) + '">' +
+          '<span class="em">' + window.Mock.catEmoji(r.Category) + '</span>' +
+          '<span class="grow"><span class="trunc" style="display:block">' +
+            esc(r.Description || '(no description)') + '</span>' +
+          '<span class="faint">' + esc(V2.shortDay(r.Date)) + ' · ' +
+            esc(r.Category || 'no category') + '</span></span>' +
+          '<span class="amt' + (inc ? ' in' : sav ? ' sav' : '') + '">' +
+            (inc ? '+' : '−') + window.Mock.fmtBaht(r.Amount) + '</span>' +
+        '</button>';
+      }).join('') + '</div>';
+  }
+
+  function renderHub(badges) {
+    document.getElementById('hub').innerHTML = V2.hubTiles().map(function (k) {
+      var d = V2.dest(k);
+      var n = badges[k] || 0;
+      return '<a class="hubtile" href="' + d.href + '">' + V2.icon(d.icon, 'lg') +
+             '<span>' + esc(d.label) + '</span>' +
+             (n ? '<span class="dot">' + n + '</span>' : '') + '</a>';
+    }).join('');
+  }
+
+  function renderAttn(a) {
+    document.getElementById('attn').innerHTML =
+      '<a class="attn-card' + (a.drafts ? ' hot' : '') + '" href="../review.html">' +
+        '<div class="n">' + a.drafts + '</div><div class="t">slips to review</div></a>' +
+      '<a class="attn-card' + (a.flagged ? ' hot' : '') + '" href="log.html?filter=flagged">' +
+        '<div class="n">' + a.flagged + '</div><div class="t">rows to look at</div></a>' +
+      '<a class="attn-card" href="settle.html">' +
+        '<div class="n">' + window.Mock.fmtBaht(a.unsettled) + '</div>' +
+        '<div class="t">unsettled</div></a>' +
+      '<a class="attn-card' + (a.toLink ? ' hot' : '') + '" href="settle.html?tab=unlinked">' +
+        '<div class="n">' + a.toLink + '</div><div class="t">payback to link</div></a>' +
+      '<a class="attn-card" href="verify.html">' +
+        '<div class="n">' + V2.icon('shield') + '</div><div class="t">card check</div></a>';
+  }
+
+  function paintNavToggle() {
+    var mode = V2.navMode();
+    [].forEach.call(document.querySelectorAll('#navtoggle button'), function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.nav === mode));
+    });
+    document.getElementById('navhint').textContent = mode === 'tab'
+      ? 'Five fixed destinations, one tap from anywhere, with badges. Log and Card check live in the “Go to” grid above.'
+      : 'Home is the map — every destination above the fold — and a floating Add button follows you.';
+  }
+  document.getElementById('navtoggle').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-nav]'); if (!b) return;
+    V2.setNavMode(b.dataset.nav);
+    paintNavToggle();
+    location.reload();
+  });
+
+  document.getElementById('upcoming').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-paid]'); if (!b) return;
+    var parts = b.dataset.paid.split(':');
+    markPaid(parts[0], parts.slice(1).join(':'));
+  });
+
+  document.getElementById('recent').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-ref]'); if (!b) return;
+    var row = S.rows.filter(function (r) { return r.RefID === b.dataset.ref; })[0];
+    if (!row) return;
+    V2.editSheet(row, {
+      config: S.cfg,
+      onSaved: function () { renderRecent(); },
+      onDeleted: function () {
+        S.rows = S.rows.filter(function (r) { return r.RefID !== b.dataset.ref; });
+        renderRecent();
+      }
+    });
+  });
+
+  (async function () {
+    document.getElementById('greet').textContent = window.Mock.greeting();
+    document.getElementById('dateline').textContent = window.Mock.dateline();
+    document.getElementById('searchbtn').innerHTML = V2.icon('search');
+    paintNavToggle();
+    var now = new Date();
+    document.getElementById('mlabel').textContent =
+      now.toLocaleDateString('en-GB', { month: 'long' });
+
+    try {
+      var r = await Promise.all([
+        DataSource.loadDatabase(),
+        DataSource.loadConfig().catch(function () { return null; }),
+        DataSource.loadGoals().catch(function () { return {}; }),
+        DataSource.loadCards().catch(function () { return []; }),
+        DataSource.loadCardCycles().catch(function () { return {}; }),
+        DataSource.loadUtilities().catch(function () { return []; }),
+        DataSource.loadDrafts().catch(function () { return []; })
+      ]);
+      var all = r[0], goals = r[2] || {};
+      S.cfg = r[1];
+      S.groups = V2.catGroups(S.cfg);
+      S.cards = r[3] || [];
+      S.cycles = r[4] || {};
+      S.rems = r[5] || [];
+      S.rows = V2.live(all).sort(function (a, b) {
+        return String(b.Date).localeCompare(String(a.Date)) ||
+               String(b.RefID).localeCompare(String(a.RefID));
+      });
+
+      // ---- hero: this month's spend against the monthly total ----
+      var mk = window.Mock.thisMonthKey();
+      var spent = 0;
+      S.rows.forEach(function (row) {
+        if (window.Mock.monthKey(row.Date) !== mk) return;
+        if (!S.groups.isSpend(row.Category)) return;
+        spent += Number(row.Amount) || 0;
+      });
+      var budget = Number(goals.monthly_total) || 0;
+      // Same arithmetic as ../index.html:91 — days remaining AFTER today, so the
+      // two homes never disagree by one.
+      var daysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate();
+      document.getElementById('hspent').textContent = window.Mock.fmtBaht(spent);
+      document.getElementById('hdays').textContent = daysLeft + ' days to go';
+      if (budget > 0) {
+        var pct = Math.min(100, Math.round(spent / budget * 100));
+        document.getElementById('hpct').textContent = pct + '% of ' + window.Mock.fmtBaht(budget);
+        document.getElementById('hbar').style.width = Math.max(2, pct) + '%';
+        document.getElementById('hleft').textContent =
+          window.Mock.fmtBaht(Math.max(0, budget - spent)) + ' left';
+      } else {
+        document.getElementById('hleft').textContent = 'no monthly goal set';
+      }
+
+      // ---- attention ----
+      var flags = V2.flags(S.rows, S.cfg);
+      var unsettled = S.rows.filter(function (row) {
+        return String(row.Settle || '') === 'True' && !row.settlement_id;
+      });
+      // Their share: stamped roong_share wins; a BLANK share is the 50% estimate.
+      // A stamped 0 means "all mine" and must not be re-estimated.
+      var owed = unsettled.reduce(function (t, row) {
+        var s = row.roong_share;
+        var share = (s === '' || s == null) ? (Number(row.Amount) || 0) * 0.5 : Number(s) || 0;
+        return t + share;
+      }, 0);
+      // "Paid but not linked" lives in history, not pending: loadRoongPending
+      // returns status==='pending' only. An income_ref of 'none' is a
+      // deliberate "no money moved", not a missing link.
+      // Bounded to 30 days, matching v2/settle.html and the live settlement
+      // page's history split. Without it, legacy June settlements confirmed
+      // before income linking existed would sit here forever as "to do".
+      var history = await DataSource.loadRoongHistory().catch(function () { return []; });
+      var toLink = (history || []).filter(function (p) {
+        if (String(p.status || '') !== 'settled') return false;
+        if (String(p.income_ref || '').trim()) return false;
+        var when = String(p.confirmed_at || p.created_at || '').slice(0, 10);
+        return when && V2.daysAgo(when) <= 30;
+      }).length;
+
+      var badges = { review: (r[6] || []).length, settle: toLink };
+      renderAttn({ drafts: (r[6] || []).length, flagged: Object.keys(flags).length,
+                   unsettled: Math.round(owed), toLink: toLink });
+      renderHub(badges);
+      renderUpcoming();
+      renderRecent();
+      V2.nav('home', badges);
+    } catch (e) {
+      document.getElementById('attn').innerHTML =
+        '<div class="err">Could not load: ' + esc(e.message) + '</div>';
+      V2.nav('home', {});
+    }
+  })();
+})();
+</script>
+</body>
+</html>

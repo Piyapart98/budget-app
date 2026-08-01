@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>Settlement — Budget</title>
+<link rel="stylesheet" href="v2.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="backb" href="index.html">&#8249; Home</a>
+    <span class="ttl">Settlement</span>
+    <span style="width:64px"></span>
+  </div>
+
+  <div class="seg" id="seg"></div>
+  <div id="body"><div class="soft-note">Loading…</div></div>
+
+  <a class="livelink" href="../roong_settlement.html"><u>Open the current Settlement page</u></a>
+</div>
+
+<script src="../warm-shared.js"></script>
+<script src="../data-source.js"></script>
+<script src="v2-shared.js"></script>
+<script>
+(function () {
+  'use strict';
+  var esc = V2.esc;
+
+  var PAYBACK_CATS = ['Payback from someone', 'Reimbursement'];
+
+  var S = {
+    tab: 'unsettled',
+    unsettled: [],     // [{...row, _pct, _share, _checked}]
+    pending: [],
+    history: [],
+    db: [],
+    cfg: null, groups: null,
+    showOldUnlinked: false,
+    ready: false
+  };
+
+  // A stamped roong_share of 0 means "ALL MINE" — never test stampedness with
+  // `> 0`. Only a blank share gets the 50% estimate.
+  function estimatedShare(row) {
+    var s = row.roong_share;
+    if (s === '' || s == null) return (parseFloat(row.Amount) || 0) * 0.5;
+    return parseFloat(s) || 0;
+  }
+
+  function fmtShort(iso) { return V2.shortDay(iso); }
+  function stripRoong(d) {
+    return String(d || '').replace(/\s*\bw\/?\s*roong\b/i, '').replace(/\s+/g, ' ').trim() || String(d || '');
+  }
+  function money(n) {
+    return n === Math.round(n) ? '฿' + Math.round(n).toLocaleString('en-US')
+                               : '฿' + n.toFixed(2);
+  }
+
+  function buildShareableText(rows) {
+    var sorted = rows.slice().sort(function (a, b) {
+      return String(a.Date || '') < String(b.Date || '') ? -1 : 1;
+    });
+    var dates = sorted.map(function (r) { return r.Date; }).filter(Boolean).sort();
+    var range = dates.length
+      ? (fmtShort(dates[0]) === fmtShort(dates[dates.length - 1])
+         ? fmtShort(dates[0])
+         : fmtShort(dates[0]) + ' – ' + fmtShort(dates[dates.length - 1])) : '';
+    var lines = ['Date: ' + range, ''];
+    var total = 0;
+    sorted.forEach(function (r) {
+      total += r._share;
+      lines.push('* ' + fmtShort(r.Date) + ' ' + stripRoong(r.Description) +
+                 ' - your share: ' + money(r._share));
+    });
+    lines.push('---');
+    lines.push('Total amount: ' + money(total));
+    return lines.join('\n');
+  }
+
+  function selected() { return S.unsettled.filter(function (r) { return r._checked; }); }
+  function selTotal() {
+    return selected().reduce(function (t, r) { return t + (r._share || 0); }, 0);
+  }
+  // The live page splits history at 30 days and hides the rest behind "Show
+  // earlier". Without the same window, three legacy June settlements that were
+  // confirmed before income linking existed look like today's work.
+  var RECENT_DAYS = 30;
+  function recent(s) {
+    var when = String(s.confirmed_at || s.created_at || '').slice(0, 10);
+    return when ? V2.daysAgo(when) <= RECENT_DAYS : false;
+  }
+  function settled() {
+    return S.history.filter(function (s) { return String(s.status || '') === 'settled'; });
+  }
+  function toLinkList(all) {
+    return settled().filter(function (s) {
+      return !String(s.income_ref || '').trim() && (all || recent(s));
+    });
+  }
+  function doneList(all) {
+    return settled().filter(function (s) {
+      return String(s.income_ref || '').trim() && (all || recent(s));
+    });
+  }
+
+  // ---- segmented board ----------------------------------------------------
+  var TABS = [['unsettled', 'Unsettled'], ['requested', 'Requested'],
+              ['unlinked', 'To link'], ['done', 'Done']];
+  function counts() {
+    return {
+      unsettled: S.unsettled.length,
+      requested: S.pending.length,
+      unlinked:  toLinkList().length,
+      done:      doneList().length
+    };
+  }
+  function renderSeg() {
+    var c = counts();
+    document.getElementById('seg').innerHTML = TABS.map(function (t) {
+      return '<button data-tab="' + t[0] + '" aria-pressed="' + (S.tab === t[0]) + '">' +
+             t[1] + '<span class="cnt">' + c[t[0]] + '</span></button>';
+    }).join('');
+  }
+
+  // ---- unsettled ----------------------------------------------------------
+  function renderUnsettled() {
+    if (!S.unsettled.length) {
+      return '<div class="empty"><span class="em">🤝</span><h3>Nothing unsettled</h3>' +
+        '<p>Every shared expense has been requested. Tick “Include in settlement” ' +
+        'on an entry to add one.</p></div>';
+    }
+    var total = selTotal(), n = selected().length;
+    var awaiting = S.pending.reduce(function (t, p) {
+      return t + (parseFloat(p.requested_amount) || 0);
+    }, 0);
+    var oldest = S.unsettled.map(function (r) { return r.Date; }).filter(Boolean).sort()[0];
+
+    return '<div class="hero" style="margin-bottom:14px">' +
+        '<div class="lab"><span>Roong owes you</span><span>' + n + ' of ' +
+          S.unsettled.length + ' selected</span></div>' +
+        '<div class="big">' + money(total) + '</div>' +
+        '<div class="note"><span>' + money(awaiting) + ' awaiting payment</span>' +
+        '<span>' + (oldest ? 'oldest: ' + fmtShort(oldest) : '') + '</span></div></div>' +
+
+      '<div class="row" style="gap:7px;margin-bottom:10px;flex-wrap:wrap">' +
+        '<button class="chip tap plain" data-all="50">All 50%</button>' +
+        '<button class="chip tap plain" data-all="100">All 100%</button>' +
+        '<button class="chip tap plain" data-all="0">Clear</button></div>' +
+
+      '<div class="card">' + S.unsettled.map(function (r, i) {
+        return '<div class="sharerow">' +
+          '<span class="tick' + (r._checked ? ' on' : '') + '" data-pick="' + i + '" ' +
+            'role="checkbox" tabindex="0" aria-checked="' + !!r._checked + '">' +
+            (r._checked ? V2.icon('check', 'sm') : '') + '</span>' +
+          '<div class="grow"><div class="trunc" style="font-weight:650">' +
+            esc(r.Description || r.RefID) + '</div>' +
+            '<div class="faint">' + esc(fmtShort(r.Date)) + ' · ' +
+            window.Mock.fmtBaht(r.Amount) +
+            (r._flagged ? ' · <span style="color:var(--amber-text)">' +
+              esc(r.Category) + '</span>' : '') + '</div></div>' +
+          '<div class="stepper">' +
+            '<button data-pct="' + i + ':-10" aria-label="Less">−</button>' +
+            '<span class="pct">' + r._pct + '%</span>' +
+            '<button data-pct="' + i + ':10" aria-label="More">+</button></div>' +
+        '</div>' +
+        '<div class="row" style="justify-content:flex-end;font-size:12.5px;' +
+          'color:var(--text-soft);padding-bottom:6px">their share ' +
+          '<b style="margin-left:6px">' + money(r._share) + '</b></div>';
+      }).join('') + '</div>' +
+
+      '<div class="stickybar"><button class="btn btn-green" id="gen"' +
+        (n ? '' : ' disabled') + '>' + V2.icon('doc', 'sm') +
+        ' Generate text · ' + money(total) + '</button></div>' +
+      '<div style="height:70px"></div>';
+  }
+
+  // ---- requested ----------------------------------------------------------
+  function renderRequested() {
+    if (!S.pending.length) {
+      return '<div class="empty"><span class="em">📤</span><h3>Nothing requested</h3>' +
+        '<p>Pick items and shares, generate the text, and the request lands here.</p>' +
+        '<button class="btn btn-green" data-tab="unsettled">Go to unsettled</button></div>';
+    }
+    return S.pending.map(function (p) {
+      // The API returns the batch's rows as `expense_rows` in BOTH modes
+      // (/api/roong/pending, and enrichWithExpenseRows in GitHub mode).
+      var rows = (p.expense_rows || []).map(function (r) {
+        return Object.assign({}, r, { _share: parseFloat(r.roong_share) || 0 });
+      });
+      var text = rows.length ? buildShareableText(rows)
+                             : 'Total amount: ' + money(parseFloat(p.requested_amount) || 0);
+      return '<div class="card" style="margin-bottom:9px">' +
+        '<div class="row"><span class="grow" style="font-family:var(--serif);font-size:19px">' +
+          esc(p.settlement_id) + ' · ' + money(parseFloat(p.requested_amount) || 0) + '</span>' +
+        '<span class="chip warn">requested ' + esc(String(p.created_at || '').slice(0, 10)) + '</span></div>' +
+        '<div class="faint" style="margin:6px 0 10px">' + rows.length + ' expense' +
+          (rows.length === 1 ? '' : 's') + ' · waiting on Roong</div>' +
+        '<div class="pre">' + esc(text) + '</div>' +
+        '<div class="row" style="gap:8px;margin-top:12px">' +
+          '<button class="btn btn-out btn-sm" style="flex:1" data-copy="' +
+            esc(p.settlement_id) + '">' + V2.icon('copy', 'sm') + ' Copy</button>' +
+          '<button class="btn btn-green btn-sm" style="flex:1.3" data-recv="' +
+            esc(p.settlement_id) + '">' + V2.icon('check', 'sm') + ' Received</button>' +
+          '<button class="btn btn-red btn-sm" data-cancel="' + esc(p.settlement_id) +
+            '" aria-label="Cancel request">' + V2.icon('x', 'sm') + '</button>' +
+        '</div></div>';
+    }).join('');
+  }
+
+  // ---- to link ------------------------------------------------------------
+  function paybackCandidates(allowSid) {
+    var used = {};
+    S.history.concat(S.pending).forEach(function (s) {
+      if (allowSid && s.settlement_id === allowSid) return;
+      String(s.income_ref || '').split('|').forEach(function (id) {
+        id = id.trim();
+        if (id && id !== 'none') used[id] = true;
+      });
+    });
+    var cut = new Date(); cut.setDate(cut.getDate() - 60);
+    var cutISO = cut.toISOString().slice(0, 10);
+    return S.db.filter(function (r) {
+      return !window.Mock.isDeleted(r) &&
+             PAYBACK_CATS.indexOf(String(r.Category || '').trim()) !== -1 &&
+             String(r.Date || '') >= cutISO &&
+             !used[String(r.RefID || '').trim()];
+    }).sort(function (a, b) { return String(a.Date) < String(b.Date) ? 1 : -1; });
+  }
+
+  function renderUnlinked() {
+    var list = S.showOldUnlinked ? toLinkList(true) : toLinkList();
+    var older = toLinkList(true).length - toLinkList().length;
+    if (!list.length) {
+      return '<div class="empty"><span class="em">🔗</span><h3>Everything is linked</h3>' +
+        '<p>Nothing from the last ' + RECENT_DAYS + ' days is waiting to be tied to ' +
+        'the income row that paid it.</p>' +
+        (older ? '<button class="btn btn-out" data-showold="1">Show ' + older +
+                 ' older unlinked settlement' + (older === 1 ? '' : 's') + '</button>' : '') +
+        '</div>';
+    }
+    return '<div class="matchhint">' + V2.icon('link', 'sm') +
+      '<span>Paid, but not yet tied to the income row that paid it. ' +
+      'Linking never changes an amount.</span></div>' +
+      list.map(function (s) {
+        var amt = parseFloat(s.requested_amount) || 0;
+        var cands = paybackCandidates(s.settlement_id);
+        var exact = cands.filter(function (r) {
+          return Math.abs((parseFloat(r.Amount) || 0) - amt) < 0.005;
+        });
+        var suggestion = exact.length === 1 ? exact[0] : null;
+        return '<div class="card" style="margin-bottom:9px">' +
+          '<div class="row"><span class="grow" style="font-family:var(--serif);font-size:19px">' +
+            esc(s.settlement_id) + ' · ' + money(amt) + '</span>' +
+          '<span class="chip warn">paid, not linked</span></div>' +
+          '<div class="faint" style="margin:6px 0 10px">settled ' +
+            esc(String(s.confirmed_at || '').slice(0, 10)) + '</div>' +
+          (suggestion
+            ? '<div class="logrow" style="margin:0;cursor:default">' +
+                '<span class="em">' + window.Mock.catEmoji(suggestion.Category) + '</span>' +
+                '<div class="grow"><div style="font-weight:650">' +
+                  esc(suggestion.Description || suggestion.RefID) + '</div>' +
+                '<div class="faint">' + esc(fmtShort(suggestion.Date)) + ' · ' +
+                  esc(suggestion.Category) + '</div>' +
+                '<div class="meta"><span class="chip info">exact amount match</span></div></div>' +
+                '<span class="amt in">+' + window.Mock.fmtBaht(suggestion.Amount) + '</span></div>' +
+              '<div class="row" style="gap:8px;margin-top:12px">' +
+                '<button class="btn btn-green btn-sm" style="flex:1" data-link="' +
+                  esc(s.settlement_id) + ':' + esc(suggestion.RefID) + '">' +
+                  V2.icon('link', 'sm') + ' Link this row</button>' +
+                '<button class="btn btn-out btn-sm" style="flex:1" data-pick-link="' +
+                  esc(s.settlement_id) + '">Pick another</button></div>'
+            : '<div class="row" style="gap:8px">' +
+                '<button class="btn btn-out btn-sm" style="flex:1" data-pick-link="' +
+                  esc(s.settlement_id) + '">' + V2.icon('link', 'sm') +
+                  ' Choose the payback row</button>' +
+                '<button class="btn btn-out btn-sm" data-nomoney="' + esc(s.settlement_id) +
+                  '">No money moved</button></div>') +
+        '</div>';
+      }).join('') +
+      (!S.showOldUnlinked && older
+        ? '<button class="btn btn-out" data-showold="1" style="margin-top:6px">Show ' +
+          older + ' older · from before income linking existed</button>' : '');
+  }
+
+  function openLinkSheet(sid) {
+    var s = S.history.filter(function (x) { return x.settlement_id === sid; })[0];
+    var amt = s ? (parseFloat(s.requested_amount) || 0) : 0;
+    var cands = paybackCandidates(sid);
+    V2.sheet('<h3>Link ' + esc(sid) + '</h3>' +
+      '<div class="sh-sub">Payback / reimbursement rows from the last 60 days, ' +
+      'not already linked. Amounts never change.</div>' +
+      (cands.length ? cands.map(function (r) {
+        var diff = (parseFloat(r.Amount) || 0) - amt;
+        return '<button type="button" class="logrow" data-choose="' + esc(sid) + ':' +
+          esc(r.RefID) + '"><span class="em">' + window.Mock.catEmoji(r.Category) + '</span>' +
+          '<span class="grow"><span style="font-weight:650;display:block">' +
+            esc(r.Description || r.RefID) + '</span>' +
+          '<span class="faint">' + esc(fmtShort(r.Date)) + ' · ' + esc(r.Category) + '</span>' +
+          (Math.abs(diff) >= 0.005
+            ? '<span class="meta"><span class="chip bad">' + money(Math.abs(diff)) + ' ' +
+              (diff < 0 ? 'less than' : 'more than') + ' requested</span></span>'
+            : '<span class="meta"><span class="chip info">exact amount match</span></span>') +
+          '</span><span class="amt in">+' + window.Mock.fmtBaht(r.Amount) + '</span></button>';
+      }).join('') : '<div class="soft-note">No unlinked payback rows in the last 60 days.</div>') +
+      '<button type="button" class="btn btn-out" style="margin-top:10px" data-choose="' +
+        esc(sid) + ':none">No money moved — mark as settled without a payment</button>');
+  }
+
+  // ---- done ---------------------------------------------------------------
+  function renderDone() {
+    var list = doneList(true);
+    if (!list.length) {
+      return '<div class="empty"><span class="em">✅</span><h3>Nothing settled yet</h3>' +
+        '<p>Linked settlements collect here.</p></div>';
+    }
+    return list.slice(0, 20).map(function (s) {
+      var ref = String(s.income_ref || '').trim();
+      var paidBy = ref === 'none' ? 'no money movement'
+        : ref.split('|').map(function (id) {
+            var row = S.db.filter(function (r) { return r.RefID === id.trim(); })[0];
+            return row ? '“' + (row.Description || id) + '” ' + window.Mock.fmtBaht(row.Amount) : id;
+          }).join(', ');
+      return '<div class="card" style="margin-bottom:8px">' +
+        '<div class="row"><span class="grow" style="font-weight:650">' + esc(s.settlement_id) +
+          ' · ' + money(parseFloat(s.requested_amount) || 0) + '</span>' +
+        '<span class="chip ok">' + V2.icon('check', 'sm') + ' settled</span></div>' +
+        '<div class="faint" style="margin-top:4px">' +
+          esc(String(s.confirmed_at || s.created_at || '').slice(0, 10)) +
+          ' · paid by ' + esc(paidBy) + '</div>' +
+        '<div class="row" style="gap:7px;margin-top:9px">' +
+          '<button class="chip tap plain" data-pick-link="' + esc(s.settlement_id) + '">' +
+            V2.icon('link', 'sm') + ' change link</button>' +
+          '<button class="chip tap plain" data-revert="' + esc(s.settlement_id) + '">' +
+            V2.icon('undo', 'sm') + ' revert to pending</button>' +
+        '</div></div>';
+    }).join('') +
+    (list.length > 20 ? '<p class="faint center">Showing the 20 most recent of ' +
+      list.length + '.</p>' : '');
+  }
+
+  // ---- render + events ----------------------------------------------------
+  function render() {
+    renderSeg();
+    var host = document.getElementById('body');
+    host.innerHTML =
+      S.tab === 'unsettled' ? renderUnsettled() :
+      S.tab === 'requested' ? renderRequested() :
+      S.tab === 'unlinked'  ? renderUnlinked()  : renderDone();
+    // The sticky bar belongs to the unsettled tab only.
+    var stray = document.querySelectorAll('.stickybar');
+    if (S.tab !== 'unsettled') [].forEach.call(stray, function (n) { n.remove(); });
+  }
+
+  async function reload() {
+    var r = await Promise.all([
+      DataSource.loadRoongUnsettled(),
+      DataSource.loadRoongPending().catch(function () { return []; }),
+      DataSource.loadRoongHistory().catch(function () { return []; }),
+      DataSource.loadDatabase()
+    ]);
+    S.unsettled = (r[0] || []).map(function (row) {
+      var pct = 50;
+      return Object.assign({}, row, {
+        _pct: pct, _share: (parseFloat(row.Amount) || 0) * pct / 100, _checked: true
+      });
+    });
+    S.pending = r[1] || [];
+    S.history = r[2] || [];
+    S.db = r[3] || [];
+    S.ready = true;
+    render();
+    V2.nav('settle', { settle: toLinkList().length + S.pending.length });
+  }
+
+  document.getElementById('seg').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-tab]'); if (!b) return;
+    S.tab = b.dataset.tab; render();
+  });
+
+  document.body.addEventListener('click', async function (e) {
+    var t = e.target.closest('[data-tab],[data-pick],[data-pct],[data-all],[data-copy],' +
+      '[data-recv],[data-cancel],[data-link],[data-pick-link],[data-choose],[data-nomoney],' +
+      '[data-revert],[data-showold]');
+    if (!t) return;
+    var d = t.dataset;
+
+    if (d.tab && !t.closest('#seg')) { S.tab = d.tab; render(); return; }
+
+    if (d.pick != null) {
+      var row = S.unsettled[+d.pick];
+      row._checked = !row._checked;
+      render(); return;
+    }
+    if (d.pct) {
+      var parts = d.pct.split(':');
+      var r0 = S.unsettled[+parts[0]];
+      r0._pct = Math.max(0, Math.min(100, r0._pct + Number(parts[1])));
+      r0._share = (parseFloat(r0.Amount) || 0) * r0._pct / 100;
+      r0._checked = r0._pct > 0 ? true : r0._checked;
+      render(); return;
+    }
+    if (d.all != null) {
+      S.unsettled.forEach(function (r) {
+        r._pct = Number(d.all);
+        r._share = (parseFloat(r.Amount) || 0) * r._pct / 100;
+        r._checked = r._pct > 0;
+      });
+      render(); return;
+    }
+
+    if (d.copy) {
+      var p = S.pending.filter(function (x) { return x.settlement_id === d.copy; })[0];
+      var rows = (p.expense_rows || []).map(function (r) {
+        return Object.assign({}, r, { _share: parseFloat(r.roong_share) || 0 });
+      });
+      var text = rows.length ? buildShareableText(rows)
+                             : 'Total amount: ' + money(parseFloat(p.requested_amount) || 0);
+      try { await navigator.clipboard.writeText(text); V2.toast('Text copied'); }
+      catch (err) { V2.toast('Copy failed — select the text manually'); }
+      return;
+    }
+
+    if (d.recv) {
+      if (!confirm('Mark ' + d.recv + ' as received?')) return;
+      V2.busy('Marking received…');
+      try {
+        await DataSource.confirmRoong(d.recv, '');
+        await reload();
+        S.tab = 'unlinked'; render();
+        V2.toast('Marked received — now link the income row that paid it');
+      } catch (err) { V2.toast('Could not confirm: ' + err.message); }
+      return;
+    }
+
+    if (d.cancel) {
+      if (!confirm('Cancel ' + d.cancel + '? The items go back to the unsettled pool.')) return;
+      V2.busy('Cancelling…');
+      try {
+        await DataSource.cancelRoong(d.cancel);
+        await reload();
+        V2.toast('Request cancelled — items returned to the pool');
+      } catch (err) { V2.toast('Could not cancel: ' + err.message); }
+      return;
+    }
+
+    if (d.link || d.choose) {
+      var v = (d.link || d.choose).split(':');
+      V2.busy('Linking…');
+      try {
+        await DataSource.linkRoongIncome(v[0], v[1]);
+        V2.closeSheet();
+        await reload();
+        S.tab = 'done'; render();
+        V2.toast(v[0] + ' linked · amounts unchanged');
+      } catch (err) { V2.toast('Could not link: ' + err.message); }
+      return;
+    }
+    if (d.nomoney) {
+      if (!confirm('Mark ' + d.nomoney + ' as settled with no money movement?')) return;
+      V2.busy('Saving…');
+      try {
+        await DataSource.linkRoongIncome(d.nomoney, 'none');
+        await reload(); S.tab = 'done'; render();
+        V2.toast('Recorded as no money movement');
+      } catch (err) { V2.toast('Could not save: ' + err.message); }
+      return;
+    }
+    if (d.pickLink) { openLinkSheet(d.pickLink); return; }
+    if (d.showold) { S.showOldUnlinked = true; render(); return; }
+
+    if (d.revert) {
+      if (!confirm('Revert ' + d.revert + ' to pending? Shares stay stamped; ' +
+                   'this is not the same as cancelling.')) return;
+      V2.busy('Reverting…');
+      try {
+        await DataSource.unconfirmRoong(d.revert);
+        await reload(); S.tab = 'requested'; render();
+        V2.toast(d.revert + ' is pending again');
+      } catch (err) { V2.toast('Could not revert: ' + err.message); }
+      return;
+    }
+  });
+
+  document.body.addEventListener('click', async function (e) {
+    if (!e.target.closest('#gen')) return;
+    var picked = selected();
+    if (!picked.length) return;
+    var payload = picked.map(function (r) {
+      return { RefID: r.RefID, roong_share: r._share };
+    });
+    var text = buildShareableText(picked);
+    V2.busy('Creating the request…');
+    try {
+      await DataSource.submitRoongRequest(payload);
+      try { await navigator.clipboard.writeText(text); } catch (err) {}
+      await reload();
+      S.tab = 'requested'; render();
+      V2.toast(picked.length + ' item' + (picked.length === 1 ? '' : 's') +
+               ' moved to Requested · text copied');
+    } catch (err) {
+      V2.toast('Could not create the request: ' + err.message);
+    }
+  });
+
+  (async function () {
+    V2.wireTopbar();
+    var params = new URLSearchParams(location.search);
+    if (params.get('tab')) S.tab = params.get('tab');
+    try {
+      S.cfg = await DataSource.loadConfig().catch(function () { return null; });
+      S.groups = V2.catGroups(S.cfg);
+      await reload();
+    } catch (e) {
+      document.getElementById('body').innerHTML =
+        '<div class="err">Could not load settlements: ' + esc(e.message) + '</div>';
+      V2.nav('settle', {});
+    }
+  })();
+})();
+</script>
+</body>
+</html>

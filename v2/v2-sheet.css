@@ -1,0 +1,80 @@
+/* ============================================================================
+   v2-sheet.css — just the bottom sheet, the toast and the form controls the
+   shared entry editor needs.
+
+   Every rule is scoped under #v2-sheet / #v2-scrim / #v2-toast so this file can
+   be dropped onto a page that already has its own stylesheet (v2/report.html
+   loads ../warm.css) without restyling anything that page owns. The v2 pages
+   proper get the same rules from v2.css and do NOT need this file.
+   ========================================================================== */
+#v2-scrim{position:fixed;inset:0;background:rgba(30,26,20,.42);z-index:80;opacity:0;
+          pointer-events:none;transition:opacity .22s cubic-bezier(.22,.61,.36,1)}
+#v2-scrim.on{opacity:1;pointer-events:auto}
+
+#v2-sheet{position:fixed;left:0;right:0;bottom:0;z-index:81;background:#fffdfa;
+          border-radius:24px 24px 0 0;padding:8px 18px calc(28px + env(safe-area-inset-bottom));
+          max-height:88vh;overflow-y:auto;transform:translateY(102%);max-width:480px;margin:0 auto;
+          transition:transform .3s cubic-bezier(.22,.61,.36,1);
+          box-shadow:0 -8px 34px rgba(0,0,0,.15);
+          font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+          font-size:15px;line-height:1.45;color:#2b2620;text-align:left}
+#v2-sheet.on{transform:translateY(0)}
+#v2-sheet *{box-sizing:border-box}
+#v2-sheet .grab{width:38px;height:4px;background:#ded8cc;border-radius:3px;margin:6px auto 12px}
+#v2-sheet h3{font-family:Georgia,'Times New Roman',serif;font-size:18px;font-weight:400;
+             margin:0 0 3px;color:#2b2620}
+#v2-sheet .sh-sub{font-size:12.5px;color:#a09a8c;margin-bottom:14px}
+#v2-sheet .row{display:flex;align-items:center;gap:10px}
+#v2-sheet .grow{flex:1;min-width:0}
+#v2-sheet .faint{color:#a09a8c;font-size:12px}
+#v2-sheet .center{text-align:center}
+#v2-sheet .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+#v2-sheet .fblock{margin-bottom:10px}
+#v2-sheet .fl{display:block;font-size:11px;color:#a09a8c;text-transform:uppercase;
+              letter-spacing:.06em;font-weight:700;margin:0 0 4px 2px}
+/* 16px minimum or iOS Safari zooms the page when a field takes focus */
+#v2-sheet .inp{width:100%;background:#f7f5f1;border:1px solid #efe9de;border-radius:14px;
+               padding:12px 13px;font:inherit;font-size:16px;color:#2b2620;min-height:48px;
+               outline:none;transition:border-color .16s,background .16s}
+#v2-sheet .inp:focus{border-color:#1a6b3c;background:#fff}
+#v2-sheet select.inp{appearance:none;padding-right:36px;background-repeat:no-repeat;
+  background-position:right 12px center;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236b6354' stroke-width='2' stroke-linecap='round'><path d='M4 6l4 4 4-4'/></svg>")}
+#v2-sheet .toggle-row{display:flex;align-items:center;gap:10px;background:#f7f5f1;
+                      border:1px solid #efe9de;border-radius:14px;padding:12px 13px;
+                      min-height:50px;margin-bottom:10px}
+#v2-sheet .tick{width:24px;height:24px;border-radius:8px;border:1.8px solid #ccc5b6;flex:0 0 auto;
+                display:flex;align-items:center;justify-content:center;background:#fffdfa;cursor:pointer}
+#v2-sheet .tick.on{background:#1a6b3c;border-color:#1a6b3c;color:#fff}
+#v2-sheet .reasons{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 12px}
+#v2-sheet .chip{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:650;
+                padding:9px 13px;border-radius:999px;border:1px solid #e6e1d6;background:#f1efe8;
+                color:#6b6354;white-space:nowrap;line-height:1.5;cursor:pointer;font-family:inherit}
+#v2-sheet .chip.on{background:#1a6b3c;color:#fff;border-color:#1a6b3c}
+#v2-sheet .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;border:0;
+               border-radius:14px;padding:15px;font-size:15px;font-weight:650;cursor:pointer;
+               min-height:50px;font-family:inherit;transition:transform .12s,filter .18s}
+#v2-sheet .btn:active{transform:scale(.985);filter:brightness(.96)}
+#v2-sheet .btn-green{background:#1a6b3c;color:#fff}
+#v2-sheet .btn-red{background:#fdf0ee;color:#a4453a;border:1px solid #f1d6d1}
+#v2-sheet .btn:disabled{opacity:.5;cursor:default}
+#v2-sheet svg.i,#v2-toast svg.i{width:19px;height:19px;stroke:currentColor;fill:none;
+                                stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+#v2-sheet svg.i.sm,#v2-toast svg.i.sm{width:15px;height:15px}
+
+#v2-toast{position:fixed;left:16px;right:16px;bottom:24px;z-index:90;background:#2b2620;color:#fff;
+          border-radius:14px;padding:13px 15px;font-size:13.5px;display:flex;align-items:center;
+          gap:10px;box-shadow:0 10px 28px rgba(0,0,0,.3);opacity:0;transform:translateY(14px);
+          pointer-events:none;max-width:448px;margin:0 auto;
+          font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+          transition:opacity .24s,transform .24s}
+#v2-toast.on{opacity:1;transform:translateY(0);pointer-events:auto}
+#v2-toast button{background:none;border:0;color:#8fe0b3;font-weight:700;font-size:13.5px;
+                 cursor:pointer;margin-left:auto;padding:4px;font-family:inherit}
+#v2-toast .spin{display:inline-block;width:15px;height:15px;border:2px solid #55504a;
+                border-top-color:#8fe0b3;border-radius:50%;animation:v2sp .7s linear infinite}
+@keyframes v2sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){
+  #v2-sheet,#v2-scrim,#v2-toast,#v2-toast .spin{transition-duration:.01ms!important;
+    animation-duration:.01ms!important}
+}

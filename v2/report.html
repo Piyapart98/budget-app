@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Monthly report — Budget</title>
+<!-- warm-journal monthly v2.0 — reality-bound redesign (2026-07-19).
+     Spec: docs/superpowers/specs/2026-07-19-monthly-report-redesign-design.md -->
+<link rel="stylesheet" href="../warm.css">
+<link rel="stylesheet" href="v2-sheet.css">
+<style>
+  /* Month picker — arrows + tappable title that opens a month-grid modal. */
+  .picker-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;}
+  .picker-arrow{background:var(--bg);border:1px solid var(--border);border-radius:8px;width:36px;height:36px;
+                display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--text-soft);
+                cursor:pointer;-webkit-tap-highlight-color:transparent;padding:0;flex-shrink:0;}
+  .picker-arrow:active{background:#ece8df;}
+  .picker-title-btn{flex:1;font-family:var(--serif);font-size:24px;font-weight:400;text-align:center;
+                    background:transparent;border:none;color:var(--text);cursor:pointer;padding:4px 8px;
+                    -webkit-tap-highlight-color:transparent;}
+  .picker-title-btn .picker-chev{font-size:11px;color:var(--text-faint);margin-left:6px;vertical-align:3px;}
+  .picker-modal{position:fixed;inset:0;background:rgba(0,0,0,0.42);display:none;align-items:center;
+                justify-content:center;z-index:50;padding:16px;}
+  .picker-modal.open{display:flex;}
+  .picker-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;
+               width:100%;max-width:340px;box-shadow:0 8px 30px rgba(0,0,0,.18);}
+  .picker-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+  .picker-head .t{font-family:var(--serif);font-size:16px;}
+  .picker-close{font-size:18px;color:var(--text-soft);cursor:pointer;line-height:1;padding:2px 8px;border-radius:6px;}
+  .picker-close:active{background:var(--bg);}
+  .picker-year{display:flex;align-items:center;justify-content:space-between;font-size:13px;
+               color:var(--text-soft);margin-bottom:12px;}
+  .picker-year .yr{font-weight:600;color:var(--text);font-size:15px;}
+  .picker-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;}
+  .month-chip{font-size:12px;text-align:center;padding:10px 0;background:var(--bg);border:1px solid var(--border);
+              border-radius:9px;color:var(--text-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .month-chip:active{background:var(--surface);}
+  .month-chip.current{background:var(--green-soft);border-color:var(--green);color:var(--green);font-weight:600;}
+  .month-chip.empty{opacity:.45;color:var(--text-faint);}
+
+  /* Tiles — 2×2, reality-bound numbers */
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}
+  .tile{background:#f1efe8;border-radius:12px;padding:10px 12px;}
+  .tile .t-label{font-size:10px;color:var(--text-faint);}
+  .tile .t-val{font-size:17px;font-weight:700;}
+  .tile .t-sub{font-size:10px;color:var(--text-faint);margin-top:2px;min-height:12px;}
+  .tile .t-sub b{color:var(--text-soft);font-weight:700;}
+  .tile .t-val.green{color:var(--green);}
+  .tile .t-val.blue{color:#1a5b8a;}
+
+  /* Hero — really spent + goal bar + pace curve */
+  .hero{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+        padding:18px 16px 14px;margin-bottom:12px;box-shadow:0 2px 10px rgba(0,0,0,.04);}
+  .hero .h-label{font-size:11px;color:var(--text-faint);letter-spacing:.4px;text-transform:uppercase;}
+  .hero .h-amount{font-family:var(--serif);font-size:38px;font-weight:400;margin:2px 0 0;line-height:1.1;}
+  .hero .h-recon{font-size:12px;color:var(--text-soft);margin:7px 0 0;line-height:1.5;}
+  .hero .h-recon b{color:var(--text);font-weight:600;}
+  .goalbar{margin:13px 0 4px;}
+  .goalbar .gb-track{height:10px;background:#f1efe8;border-radius:6px;overflow:hidden;position:relative;}
+  .goalbar .gb-fill{height:100%;background:#EF9F27;border-radius:6px;}
+  .goalbar .gb-row{display:flex;justify-content:space-between;font-size:11px;color:var(--text-faint);margin-top:5px;}
+  .goalbar .gb-row b{color:var(--text-soft);font-weight:600;}
+  .pace{margin-top:14px;}
+  .pace svg{display:block;width:100%;height:auto;}
+  .pace-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:var(--text-soft);margin-top:8px;}
+  .pace-legend .item{display:flex;align-items:center;gap:5px;}
+  .pace-legend .sw{width:14px;height:3px;border-radius:2px;}
+  .pace-legend .sw.dot{width:8px;height:8px;border-radius:50%;}
+  .perday{margin-top:12px;background:var(--amber-bg);border:1px solid var(--amber-border);
+          border-radius:10px;padding:9px 12px;font-size:12.5px;color:var(--amber-text);line-height:1.5;}
+  .perday b{font-weight:700;}
+
+  /* Story — its own card */
+  .story-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+              padding:13px 15px;margin-bottom:12px;font-size:14.5px;color:var(--text-soft);
+              line-height:1.6;box-shadow:0 2px 10px rgba(0,0,0,.04);}
+  .story-card b{color:var(--text);}
+
+  /* Attention cards */
+  .att-card{border-radius:12px;padding:12px 13px;margin-bottom:9px;font-size:13px;line-height:1.5;}
+  .att-card.warn{background:var(--red-bg);border:1px solid var(--red-border);color:var(--red);}
+  .att-card.odd{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber-text);}
+  .att-card b{font-weight:700;}
+  .att-card .sub{font-size:11.5px;opacity:.85;margin-top:3px;}
+
+  /* Share-of-total bar + aligned legend */
+  .sharebar{display:flex;width:100%;height:42px;border-radius:8px;overflow:hidden;margin:2px 0 14px;}
+  .sharebar>div{height:100%;}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:7px 16px;font-size:13px;}
+  .legend .item{display:flex;align-items:center;gap:7px;min-width:0;}
+  .legend .sw{width:12px;height:12px;border-radius:3px;flex:none;}
+  .legend .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .legend .pc{font-variant-numeric:tabular-nums;color:var(--text-soft);font-weight:600;}
+
+  /* Monthly Actual Spending */
+  .hist-lead{font-size:13.5px;color:var(--text-soft);margin-bottom:8px;}
+  .hist-lead b{color:var(--text);}
+  .cmp-row{display:flex;justify-content:space-between;align-items:baseline;font-size:13.5px;
+           padding:7px 2px;border-bottom:1px dashed var(--border);}
+  .cmp-row .lbl{color:var(--text-soft);}
+  .cmp-row .val{font-variant-numeric:tabular-nums;font-weight:600;}
+  .cmp-row .val.up{color:#a4453a;}
+  .cmp-row .val.down{color:var(--green);}
+  .chart{margin-top:10px;}
+  .chart svg{display:block;width:100%;height:auto;}
+  .chart-note{font-size:11px;color:var(--text-faint);margin-top:6px;line-height:1.5;}
+
+  /* Income / Saving / category rows */
+  .cat-row{margin-bottom:9px;background:var(--surface);border:1px solid var(--border);
+           border-radius:12px;padding:11px 13px;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .cat-row:active{background:#faf8f2;}
+  .cat-head{display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .cat-name{font-size:14px;display:flex;align-items:center;gap:7px;min-width:0;}
+  .cat-name .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cat-right{font-variant-numeric:tabular-nums;font-size:13px;color:var(--text-soft);
+             display:flex;align-items:center;gap:7px;white-space:nowrap;}
+  .chev{font-size:10px;color:var(--text-faint);transition:transform .15s;display:inline-block;}
+  .cat-row.open .chev{transform:rotate(90deg);}
+  .gtrack{height:6px;background:#f1efe8;border-radius:4px;margin-top:8px;overflow:hidden;}
+  .gfill{height:100%;border-radius:4px;background:#c3bdae;}
+  .gfill.top{background:#EF9F27;}
+  .gfill.over{background:#c0564a;}
+  .gfill.inflow{background:var(--green);}
+  .gfill.saving{background:#1a5b8a;}
+  .gcap{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-faint);margin-top:4px;}
+  .gcap .over-txt{color:#a4453a;font-weight:600;}
+  .entries{margin-top:10px;padding-top:9px;border-top:1px dashed var(--border);display:none;}
+  .cat-row.open .entries{display:block;}
+  .entry{display:grid;grid-template-columns:46px 1fr auto;gap:8px;align-items:center;
+         font-size:12px;padding:5px 0;}
+  .entry .ed{color:var(--text-faint);font-size:11px;}
+  .entry .en{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .entry .ea{font-variant-numeric:tabular-nums;color:var(--text-soft);text-align:right;white-space:nowrap;}
+  .entry .ea .gross{color:var(--text-faint);text-decoration:line-through;font-size:10.5px;margin-right:4px;}
+  .entry.empty{grid-column:1/-1;text-align:center;color:var(--text-faint);}
+  .entry.excl .en,.entry.excl .ea,.entry.excl .ed{color:var(--text-faint);}
+  .x-tag{font-size:9px;padding:1px 6px;border-radius:999px;margin-left:5px;vertical-align:middle;
+         white-space:nowrap;font-weight:600;background:#f1efe8;color:var(--text-faint);
+         border:1px solid var(--border);}
+  .excl-note{font-size:11px;color:var(--text-faint);font-style:italic;padding:6px 0 0;line-height:1.5;}
+  .settle-tag{font-size:9px;padding:1px 6px;border-radius:999px;margin-left:5px;
+              vertical-align:middle;white-space:nowrap;font-weight:600;}
+  .settle-tag.settled{background:#e3f3e9;color:#1f7a44;}
+  .settle-tag.pending{background:#fdf3e0;color:#a9700f;}
+  .settle-tag.unsettled{background:#fdeaea;color:#b3373c;}
+  .flag-badge{font-size:9px;background:var(--amber-bg);border:1px solid var(--amber-border);
+              color:var(--amber-text);border-radius:999px;padding:1px 6px;font-weight:600;}
+
+  /* "Where it went" header with a Set-goal link */
+  .wiw-head{display:flex;justify-content:space-between;align-items:baseline;}
+  .set-goal-link{font-family:var(--serif);font-style:italic;font-size:16px;color:var(--green);
+                 cursor:pointer;-webkit-tap-highlight-color:transparent;}
+  .set-goal-link:active{opacity:.6;}
+  .foot{font-size:11px;color:var(--text-faint);margin-top:20px;line-height:1.6;}
+
+  /* Goal-editor modal */
+  .gmodal{position:fixed;inset:0;background:rgba(0,0,0,.42);display:none;align-items:center;
+          justify-content:center;z-index:60;padding:16px;}
+  .gmodal.open{display:flex;}
+  .gmodal-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;
+               width:100%;max-width:360px;max-height:82vh;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.2);}
+  .gmodal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .gmodal-head .t{font-family:var(--serif);font-size:18px;}
+  .gmodal-close{font-size:18px;color:var(--text-soft);cursor:pointer;line-height:1;padding:2px 8px;border-radius:6px;}
+  .gmodal-sub{font-size:11px;color:var(--text-faint);margin-bottom:10px;}
+  .gmrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;
+         border-top:1px solid var(--border);font-size:14px;}
+  .gmrow .gnm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .gmrow.total{border-top:2px solid var(--border);margin-top:6px;font-weight:600;}
+  .ginput{width:90px;font-size:14px;padding:7px 9px;border:1px solid #cfc8b8;border-radius:8px;background:#fff;
+          font-family:inherit;text-align:right;font-variant-numeric:tabular-nums;}
+  .gmact{display:flex;gap:8px;margin-top:16px;}
+  .gmact button{flex:1;border:none;border-radius:11px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;}
+  .gm-cancel{background:#f1efe8;color:var(--text-soft);}
+  .gm-save{background:var(--green);color:#fff;}
+  .gtoast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#33302a;color:#f5f4f0;
+          font-size:13px;padding:10px 16px;border-radius:999px;opacity:0;transition:opacity .25s;
+          pointer-events:none;z-index:70;white-space:nowrap;max-width:90%;text-align:center;}
+  .gtoast.show{opacity:.96;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back-link" href="index.html">‹ Home</a>
+  <div class="picker-row">
+    <button class="picker-arrow" id="prev" aria-label="Previous month">‹</button>
+    <button class="picker-title-btn" id="month-label-btn">… <span class="picker-chev">▼</span></button>
+    <button class="picker-arrow" id="next" aria-label="Next month">›</button>
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><div class="t-label">Spent</div><div class="t-val" id="t-spent">—</div>
+      <div class="t-sub" id="t-spent-sub"></div></div>
+    <div class="tile"><div class="t-label">Real income</div><div class="t-val green" id="t-income">—</div>
+      <div class="t-sub" id="t-income-sub"></div></div>
+    <div class="tile"><div class="t-label">Saving</div><div class="t-val blue" id="t-saving">—</div>
+      <div class="t-sub" id="t-saving-sub"></div></div>
+    <div class="tile"><div class="t-label">Left in account</div><div class="t-val" id="t-left">—</div>
+      <div class="t-sub">income − spend − saving</div></div>
+  </div>
+
+  <div class="hero" id="hero">
+    <div class="h-label" id="h-label">Really spent so far</div>
+    <div class="h-amount" id="h-amount">—</div>
+    <div class="h-recon" id="h-recon"></div>
+    <div class="goalbar" id="goalbar"></div>
+    <div class="pace" id="pace"></div>
+    <div class="pace-legend" id="pace-legend"></div>
+    <div class="perday" id="perday" style="display:none"></div>
+  </div>
+
+  <div class="story-card" id="story">Loading…</div>
+
+  <div class="section-title" id="att-title" style="display:none">Worth your attention</div>
+  <div id="att"></div>
+
+  <div class="section-title">What you spent on</div>
+  <div class="card" id="share-card"><div class="soft-note">Loading…</div></div>
+
+  <div class="section-title">Monthly Actual Spending</div>
+  <div class="card" id="hist-card"><div class="soft-note">Loading…</div></div>
+
+  <div class="section-title">Income</div>
+  <div id="income"></div>
+
+  <div class="section-title">Saving</div>
+  <div id="saving"></div>
+
+  <div class="section-title wiw-head"><span>Where it went</span>
+    <span class="set-goal-link" id="set-goal">set goal</span></div>
+  <div id="cats"><div class="soft-note">Loading…</div></div>
+
+  <div class="foot">Amounts are your <b>real share</b>: shared/flagged expenses are
+    counted net of what others owe you, from day one — shares not yet requested are
+    estimated at 50%. Projection = spend so far + fixed commitments still expected
+    (To Mom, Utilities and Subs — median of the last 3 months, less what's already
+    paid) + a capped 8-week daily rate × days left.</div>
+</div>
+
+<!-- Goal-editor modal -->
+<div class="gmodal" id="gmodal" role="dialog" aria-modal="true" aria-label="Edit budget goals">
+  <div class="gmodal-card">
+    <div class="gmodal-head"><span class="t">Budget goals</span>
+      <span class="gmodal-close" id="gmodal-close" aria-label="Close">✕</span></div>
+    <div class="gmodal-sub">Set a monthly budget per category. The total is their sum.</div>
+    <div id="gmodal-rows"></div>
+    <div class="gmrow total"><span class="gnm">Monthly total</span>
+      <span id="gm-total" style="font-variant-numeric:tabular-nums">฿0</span></div>
+    <div class="gmact"><button class="gm-cancel" id="gm-cancel">Cancel</button>
+      <button class="gm-save" id="gm-save">Save</button></div>
+  </div>
+</div>
+<div class="gtoast" id="gtoast"></div>
+
+<!-- Month picker modal -->
+<div class="picker-modal" id="picker-modal" role="dialog" aria-modal="true" aria-label="Select month">
+  <div class="picker-card">
+    <div class="picker-head">
+      <div class="t">Select month</div>
+      <div class="picker-close" id="picker-close" aria-label="Close">✕</div>
+    </div>
+    <div class="picker-year">
+      <button class="picker-arrow" id="prev-year" aria-label="Previous year">‹</button>
+      <span class="yr" id="picker-year-label">2026</span>
+      <button class="picker-arrow" id="next-year" aria-label="Next year">›</button>
+    </div>
+    <div class="picker-grid" id="picker-month-chips"></div>
+  </div>
+</div>
+
+<script src="../data-source.js"></script>
+<script src="../warm-shared.js"></script>
+<script src="v2-shared.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // House palette: amber = the story, grays = context (BBC-style discipline).
+  var AMBER = '#EF9F27', GRAY = '#c3bdae', RED = '#a4453a';
+  var GRAYS = ['#8f897a','#9c9687','#a9a394','#b6b0a1','#c3bdae','#D3D1C7'];
+  var INCOME_GREEN = '#1a6b3c', SAVING_BLUE = '#1a5b8a';
+  var ROONG = 'With Roong';
+
+  // Paybacks clear owed-to-you; they are never real income (spec §2.3-4).
+  // Hardcoded by design — see the redesign spec §7.
+  var PAYBACK_CATS = ['Reimbursement', 'Payback from someone'];
+
+  // Categories treated as monthly fixed commitments by the projection
+  // (spec 2026-07-20 §2.1). Inferred from history — no stored amounts.
+  var FIXED_CATS = ['To Mom', 'Utilities and Subs'];
+
+  var rows = null, isIncome = null, isSaving = null, goals = null;
+  var settledSet = {}, pendingSet = {};   // settlement_id -> true
+  var incomeRefMap = {};                  // payback row RefID -> settlement_id
+  var cur = new Date(); cur.setDate(1);
+
+  function key(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+  function label(d) { return d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }); }
+  function shiftMonth(d, n) { var x = new Date(d); x.setMonth(x.getMonth() + n); return x; }
+
+  // ---- Reality-bound math core (spec §2) ----
+  function isFlagged(r) {
+    return (r.Category || '').trim() === ROONG ||
+           String(r.Settle || '').toLowerCase() === 'true';
+  }
+  function shareOf(r) {
+    if (!isFlagged(r)) return 0;
+    var amt = parseFloat(r.Amount) || 0;
+    // A stamped share is authoritative — INCLUDING an explicit 0 ("all mine").
+    // The 50% estimate applies only while roong_share is blank (no settlement
+    // request yet; a cancelled request clears it back to blank).
+    var raw = String(r.roong_share == null ? '' : r.roong_share).trim();
+    if (raw !== '' && !isNaN(parseFloat(raw)))
+      return Math.min(Math.max(parseFloat(raw), 0), amt);
+    return amt * 0.5;
+  }
+  function netOf(r) { return (parseFloat(r.Amount) || 0) - shareOf(r); }
+  function isPayback(c) { return PAYBACK_CATS.indexOf((c || '').trim()) !== -1; }
+  function isFixedCat(c) { return FIXED_CATS.indexOf((c || '').trim()) !== -1; }
+  function median(a) {
+    if (!a.length) return 0;
+    var s = a.slice().sort(function (x, y) { return x - y; });
+    var mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  }
+  function fmtBaht0(v) {
+    var n = Math.round(v);
+    return (n < 0 ? '−฿' : '฿') + Math.abs(n).toLocaleString('en-US');
+  }
+
+  function computeMonth(mk) {
+    var t = { spent: 0, gross: 0, income: 0, saving: 0, paybacks: 0, received: 0,
+              owed: 0, byCat: {}, spendRows: [], incomeRows: [], savingRows: [],
+              paybackRows: [] };
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r) || Mock.monthKey(r.Date) !== mk) return;
+      var amt = parseFloat(r.Amount) || 0;
+      // Saving before income: a stale config may list saving cats as income.
+      if (isSaving(r.Category)) { t.saving += amt; t.savingRows.push(r); return; }
+      if (isIncome(r.Category)) {
+        if (isPayback(r.Category)) { t.paybacks += amt; t.paybackRows.push(r); }
+        else { t.income += amt; }
+        t.incomeRows.push(r); return;
+      }
+      var share = shareOf(r), net = amt - share;
+      t.gross += amt; t.spent += net;
+      if (share > 0) {
+        var sid = String(r.settlement_id || '').trim();
+        if (sid && settledSet[sid]) t.received += share; else t.owed += share;
+      }
+      var c = (r.Category || 'Other spending').trim() || 'Other spending';
+      t.byCat[c] = (t.byCat[c] || 0) + net;
+      t.spendRows.push(r);
+    });
+    return t;
+  }
+
+  function daysInfo() {
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var days = new Date(cur.getFullYear(), cur.getMonth() + 1, 0).getDate();
+    var current = key(cur) === key(today);
+    var elapsed = current ? today.getDate() : days;
+    return { days: days, elapsed: elapsed, current: current,
+             left: current ? days - today.getDate() : 0 };
+  }
+
+  // ---- Daily helpers: pace, projection, typical-month ghost (spec §4.1) ----
+  function dailyNet() {          // memoized: 'YYYY-MM-DD' -> net spend that day
+    if (dailyNet._c) return dailyNet._c;
+    var m = {};
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r) || isIncome(r.Category) || isSaving(r.Category)) return;
+      var ds = String(r.Date || '').slice(0, 10);
+      if (ds.length === 10) m[ds] = (m[ds] || 0) + netOf(r);
+    });
+    return (dailyNet._c = m);
+  }
+  function cumThroughDay(mk, day) {
+    var m = dailyNet(), sum = 0;
+    for (var d = 1; d <= day; d++)
+      sum += m[mk + '-' + String(d).padStart(2, '0')] || 0;
+    return sum;
+  }
+  function isoDay(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+           '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function dailyVarNet() {       // memoized: variable spend only (no fixed cats)
+    if (dailyVarNet._c) return dailyVarNet._c;
+    var m = {};
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r) || isIncome(r.Category) || isSaving(r.Category) ||
+          isFixedCat(r.Category)) return;
+      var ds = String(r.Date || '').slice(0, 10);
+      if (ds.length === 10) m[ds] = (m[ds] || 0) + netOf(r);
+    });
+    return (dailyVarNet._c = m);
+  }
+  function cappedRate() {        // ฿/day: trailing 56 days of variable spend,
+    var m = dailyVarNet();       // each day capped at p90 of non-zero days
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var vals = [];
+    for (var i = 1; i <= 56; i++) {
+      var d = new Date(today); d.setDate(today.getDate() - i);
+      vals.push(m[isoDay(d)] || 0);
+    }
+    var nz = vals.filter(function (v) { return v > 0; })
+                 .sort(function (x, y) { return x - y; });
+    var cap = nz.length ? nz[Math.min(nz.length - 1, Math.floor(0.90 * nz.length))]
+                        : Infinity;
+    var sum = 0;
+    vals.forEach(function (v) { sum += Math.min(v, cap); });
+    return sum / 56;
+  }
+  function fixedInfo() {         // memoized: [{cat, expected, dom}] from the
+    if (fixedInfo._c) return fixedInfo._c;   // 3 complete months before `cur`
+    var firstMk = null;
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r)) return;
+      var rmk = Mock.monthKey(r.Date);
+      if (rmk && (!firstMk || rmk < firstMk)) firstMk = rmk;
+    });
+    var months = [];
+    for (var i = 1; i <= 3; i++) {
+      var mk2 = key(shiftMonth(cur, -i));
+      if (firstMk && mk2 >= firstMk) months.push(mk2);
+    }
+    var out = FIXED_CATS.map(function (c) {
+      var totals = months.map(function () { return 0; }), doms = [];
+      rows.forEach(function (r) {
+        if (Mock.isDeleted(r) || (r.Category || '').trim() !== c) return;
+        var idx = months.indexOf(Mock.monthKey(r.Date));
+        if (idx === -1) return;
+        totals[idx] += netOf(r);
+        doms.push(parseInt(String(r.Date).slice(8, 10), 10) || 1);
+      });
+      return { cat: c, expected: median(totals),
+               dom: doms.length ? Math.round(median(doms)) : 1 };
+    });
+    return (fixedInfo._c = out);
+  }
+  function fixedRemaining(mk) {  // [{cat, amount, dom}] still expected this month
+    var paid = {};
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r) || Mock.monthKey(r.Date) !== mk) return;
+      var c = (r.Category || '').trim();
+      if (isFixedCat(c)) paid[c] = (paid[c] || 0) + netOf(r);
+    });
+    var out = [];
+    fixedInfo().forEach(function (f) {
+      var rem = Math.max(0, f.expected - (paid[f.cat] || 0));
+      if (rem > 0) out.push({ cat: f.cat, amount: rem, dom: f.dom });
+    });
+    return out;
+  }
+  function projection(t, di) {   // spent + remaining fixed + capped rate × left
+    var fsum = 0;                // (spec 2026-07-20 §2)
+    fixedRemaining(key(cur)).forEach(function (f) { fsum += f.amount; });
+    return t.spent + fsum + cappedRate() * di.left;
+  }
+  function projectionCurve(t, di) {  // cumulative expected, days elapsed+1..days
+    var rate = cappedRate(), fx = fixedRemaining(key(cur));
+    var out = [], cumv = t.spent;
+    for (var d = di.elapsed + 1; d <= di.days; d++) {
+      cumv += rate;
+      fx.forEach(function (f) {
+        // step lands on the typical day; if that's past (or today), tomorrow
+        var stepDay = Math.min(Math.max(f.dom, di.elapsed + 1), di.days);
+        if (d === stepDay) cumv += f.amount;
+      });
+      out.push(cumv);
+    }
+    return out;
+  }
+  function typicalCurve(days) {  // avg cumulative per day over the 6 months before `cur`
+    var months = [];
+    for (var i = 1; i <= 6; i++) months.push(key(shiftMonth(cur, -i)));
+    var out = [];
+    for (var d = 1; d <= days; d++) {
+      var s = 0, n = 0;
+      months.forEach(function (mk2) {
+        var dm = new Date(parseInt(mk2.slice(0, 4), 10),
+                          parseInt(mk2.slice(5, 7), 10), 0).getDate();
+        s += cumThroughDay(mk2, Math.min(d, dm)); n++;
+      });
+      out.push(n ? s / n : 0);
+    }
+    return out;
+  }
+
+  // ---- Unusual-expense detection (spec §4.4) ----
+  function unusualItems(mk) {
+    // Median per category over the 6 months before the viewed month (≥3 rows).
+    var startMk = key(shiftMonth(cur, -6)), hist = {};
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r) || isIncome(r.Category) || isSaving(r.Category)) return;
+      var rmk = Mock.monthKey(r.Date);
+      if (rmk < startMk || rmk >= mk) return;
+      var c = (r.Category || 'Other spending').trim() || 'Other spending';
+      (hist[c] = hist[c] || []).push(parseFloat(r.Amount) || 0);
+    });
+    var med = {};
+    Object.keys(hist).forEach(function (c) {
+      var a = hist[c].sort(function (x, y) { return x - y; });
+      if (a.length >= 3) med[c] = a[Math.floor(a.length / 2)];
+    });
+    var out = [];
+    rows.forEach(function (r) {
+      if (Mock.isDeleted(r) || Mock.monthKey(r.Date) !== mk) return;
+      if (isIncome(r.Category) || isSaving(r.Category)) return;
+      var c = (r.Category || 'Other spending').trim() || 'Other spending', amt = parseFloat(r.Amount) || 0;
+      if (med[c] && amt >= 4 * med[c] && amt >= 800)
+        out.push({ r: r, mult: Math.round(amt / med[c]), med: med[c] });
+    });
+    out.sort(function (a, b) {
+      return (parseFloat(b.r.Amount) || 0) - (parseFloat(a.r.Amount) || 0);
+    });
+    return out.slice(0, 3);
+  }
+
+  function monthGoal() {
+    return (goals && parseFloat(goals.monthly_total) > 0)
+      ? parseFloat(goals.monthly_total) : null;
+  }
+  function entryDate(r) {
+    var d = new Date(r.Date);
+    return isNaN(d) ? Mock.escapeHtml(r.Date || '')
+      : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  }
+  function entryDesc(r) {
+    return Mock.escapeHtml((r.Description || r.Note || '').trim() || '(no description)');
+  }
+
+  // ================= render =================
+  function render() {
+    dailyNet._c = null;   // rows/goals may have changed (goal save re-enters here)
+    dailyVarNet._c = null; fixedInfo._c = null;
+    var mk = key(cur);
+    document.getElementById('month-label-btn').innerHTML =
+      Mock.escapeHtml(label(cur)) + ' <span class="picker-chev">▼</span>';
+    var t = computeMonth(mk), di = daysInfo();
+
+    // ---- tiles ----
+    document.getElementById('t-spent').textContent = fmtBaht0(t.spent);
+    document.getElementById('t-spent-sub').innerHTML =
+      t.owed > 0 ? '<b>' + fmtBaht0(t.owed) + '</b> still owed to you' : '';
+    document.getElementById('t-income').textContent = fmtBaht0(t.income);
+    document.getElementById('t-income-sub').textContent =
+      t.paybacks > 0 ? 'paybacks ' + fmtBaht0(t.paybacks) + ' excluded' : '';
+    document.getElementById('t-saving').textContent = fmtBaht0(t.saving);
+    document.getElementById('t-saving-sub').textContent = t.savingRows.length
+      ? t.savingRows.length + ' transfer' + (t.savingRows.length > 1 ? 's' : '') : '';
+    document.getElementById('t-left').textContent =
+      fmtBaht0(t.income - t.spent - t.saving);
+
+    // ---- hero header ----
+    document.getElementById('h-label').textContent =
+      di.current ? 'Really spent so far' : 'Really spent';
+    document.getElementById('h-amount').textContent = fmtBaht0(t.spent);
+    document.getElementById('h-recon').innerHTML = (t.gross > t.spent)
+      ? '= <b>' + fmtBaht0(t.gross) + '</b> paid − <b>' + fmtBaht0(t.gross - t.spent) +
+        '</b> coming back to you <span style="color:var(--text-faint)">(' +
+        fmtBaht0(t.received) + ' received · ' + fmtBaht0(t.owed) + ' still owed)</span>'
+      : '';
+
+    renderStory(t, di);
+    renderGoalPace(t, di);
+    renderAttention(t, di);
+    renderShare(t);
+    renderHistory(t, di);
+    renderInflows(t);
+    renderCats(t);
+  }
+
+  // ---- story card ----
+  function renderStory(t, di) {
+    var el = document.getElementById('story');
+    if (t.spent === 0 && t.income === 0 && t.saving === 0) {
+      el.textContent = 'Nothing recorded for ' + label(cur) + ' yet.'; return;
+    }
+    var prevMk = key(shiftMonth(cur, -1));
+    var prevCmp = di.current ? cumThroughDay(prevMk, di.elapsed)
+                             : computeMonth(prevMk).spent;
+    var s = "You've <b>really spent " + fmtBaht0(t.spent) + '</b>';
+    if (t.gross > t.spent)
+      s += " — that's " + fmtBaht0(t.gross) + ' paid minus ' +
+           fmtBaht0(t.gross - t.spent) + ' coming back to you';
+    if (prevCmp > 0) {
+      var d = t.spent - prevCmp;
+      s += ". It's about <b>" + fmtBaht0(Math.abs(d)) + ' ' +
+           (d < 0 ? 'less' : 'more') + '</b> than last month' +
+           (di.current ? ' at this point' : '');
+    }
+    var GOAL = monthGoal();
+    if (GOAL)
+      s += (prevCmp > 0 ? ', and' : '.') + " you've used <b>" +
+           Math.round(t.spent / GOAL * 100) + '%</b> of your ' + fmtBaht0(GOAL) +
+           ' goal' + (di.current ? ' with ' + di.left + ' days to go' : '');
+    el.innerHTML = s + '.';
+  }
+
+  // ---- hero: goal bar + pace curve + per-day box (spec §4.1-4.2, §4.5) ----
+  function renderGoalPace(t, di) {
+    var GOAL = monthGoal(), mk = key(cur);
+    var gb = document.getElementById('goalbar');
+    if (GOAL) {
+      var pct = Math.round(t.spent / GOAL * 100);
+      gb.innerHTML = '<div class="gb-track"><div class="gb-fill" style="width:' +
+        Math.min(100, pct) + '%' + (pct > 100 ? ';background:#c0564a' : '') +
+        '"></div></div><div class="gb-row"><span><b>' + pct +
+        '%</b> of your ' + fmtBaht0(GOAL) + ' goal</span><span>' +
+        (t.spent <= GOAL ? fmtBaht0(GOAL - t.spent) + ' left'
+                         : fmtBaht0(t.spent - GOAL) + ' over') + '</span></div>';
+    } else gb.innerHTML = '';
+
+    // pace curve
+    var box = document.getElementById('pace');
+    var cum = [];
+    for (var d = 1; d <= di.elapsed; d++) cum.push(cumThroughDay(mk, d));
+    var PROJ = di.current ? projection(t, di) : null;
+    var typ = typicalCurve(di.days);
+    var W = box.clientWidth || 320, H = 150;
+    var padL = 38, padR = 10, padT = 10, padB = 18;
+    var maxY = Math.max(1,
+      (cum.length ? cum[cum.length - 1] : 0), (PROJ || 0), (GOAL || 0),
+      (typ.length ? typ[typ.length - 1] : 0)) * 1.08;
+    function X(dd) { return padL + (W - padL - padR) * (dd - 1) / (di.days - 1); }
+    function Y(v) { return (H - padB) - (H - padB - padT) * v / maxY; }
+    function fmtK(v) {
+      return v >= 1000 ? '฿' + (Math.round(v / 100) / 10) + 'k' : '฿' + Math.round(v);
+    }
+    // gridline steps: thirds of maxY rounded to a nice number
+    var stepGuess = maxY / 3;
+    var mag = Math.pow(10, Math.floor(Math.log(stepGuess) / Math.LN10));
+    var stepN = mag * (stepGuess / mag <= 1 ? 1 : stepGuess / mag <= 2 ? 2 :
+                       stepGuess / mag <= 5 ? 5 : 10);
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">' +
+      '<defs><linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="' + AMBER + '" stop-opacity="0.18"/>' +
+      '<stop offset="1" stop-color="' + AMBER + '" stop-opacity="0"/></linearGradient></defs>';
+    for (var v = stepN; v <= maxY; v += stepN)
+      s += '<line x1="' + padL + '" y1="' + Y(v) + '" x2="' + (W - padR) + '" y2="' + Y(v) +
+           '" stroke="rgba(128,128,128,.14)"/>' +
+           '<text x="' + (padL - 4) + '" y="' + (Y(v) + 3) + '" text-anchor="end" ' +
+           'font-size="8" fill="#a09a8c">' + fmtK(v) + '</text>';
+    if (GOAL)
+      s += '<line x1="' + padL + '" y1="' + Y(GOAL) + '" x2="' + (W - padR) + '" y2="' +
+           Y(GOAL) + '" stroke="' + RED + '" stroke-width="1.4" stroke-dasharray="5 3"/>' +
+           '<text x="' + (W - padR) + '" y="' + (Y(GOAL) - 4) + '" text-anchor="end" ' +
+           'font-size="8.5" fill="' + RED + '" font-weight="600">goal</text>';
+    if (typ.length) {
+      var g = 'M' + X(1) + ',' + Y(typ[0]);
+      for (var d2 = 2; d2 <= di.days; d2++) g += 'L' + X(d2) + ',' + Y(typ[d2 - 1]);
+      s += '<path d="' + g + '" fill="none" stroke="' + GRAY + '" stroke-width="2"/>';
+    }
+    if (cum.length) {
+      var p = 'M' + X(1) + ',' + Y(cum[0]);
+      for (var i = 1; i < cum.length; i++) p += 'L' + X(i + 1) + ',' + Y(cum[i]);
+      var area = p + 'L' + X(cum.length) + ',' + (H - padB) + 'L' + X(1) + ',' +
+                 (H - padB) + 'Z';
+      s += '<path d="' + area + '" fill="url(#pg)"/>' +
+           '<path d="' + p + '" fill="none" stroke="' + AMBER +
+           '" stroke-width="2.6" stroke-linecap="round"/>';
+      if (PROJ !== null) {
+        var pcv = projectionCurve(t, di);
+        if (pcv.length) {
+          var pp = 'M' + X(di.elapsed) + ',' + Y(cum[cum.length - 1]);
+          for (var q = 0; q < pcv.length; q++)
+            pp += 'L' + X(di.elapsed + 1 + q) + ',' + Y(pcv[q]);
+          s += '<path d="' + pp + '" fill="none" stroke="' + AMBER +
+               '" stroke-width="2" stroke-dasharray="2 4" opacity=".65"/>';
+        }
+        s += '<circle cx="' + X(di.days) + '" cy="' + Y(PROJ) + '" r="4" fill="' +
+             AMBER + '" opacity=".65"/>';
+      }
+      s += '<circle cx="' + X(cum.length) + '" cy="' + Y(cum[cum.length - 1]) +
+           '" r="4.5" fill="' + AMBER + '"/>';
+    }
+    var mon = cur.toLocaleDateString('en-GB', { month: 'short' });
+    var xlabels = [[1, '1 ' + mon]];
+    if (di.current && di.elapsed > 1 && di.elapsed < di.days)
+      xlabels.push([di.elapsed, 'today']);
+    xlabels.push([di.days, String(di.days)]);
+    xlabels.forEach(function (tp) {
+      s += '<text x="' + X(tp[0]) + '" y="' + (H - 4) + '" text-anchor="middle" ' +
+           'font-size="8.5" fill="#a09a8c"' +
+           (tp[1] === 'today' ? ' font-weight="700"' : '') + '>' + tp[1] + '</text>';
+    });
+    s += '</svg>';
+    box.innerHTML = s;
+
+    // legend
+    var leg = '<span class="item"><span class="sw" style="background:' + AMBER +
+      '"></span>this month</span>';
+    if (PROJ !== null)
+      leg += '<span class="item"><span class="sw dot" style="background:' + AMBER +
+        ';opacity:.55"></span>projected ~' + fmtBaht0(PROJ) + '</span>';
+    leg += '<span class="item"><span class="sw" style="background:' + GRAY +
+      '"></span>typical month</span>';
+    if (GOAL)
+      leg += '<span class="item"><span class="sw" style="background:' + RED +
+        ';height:2px"></span>goal ' + fmtBaht0(GOAL) + '</span>';
+    document.getElementById('pace-legend').innerHTML = leg;
+
+    // per-day advice box
+    var pd = document.getElementById('perday');
+    if (di.current && GOAL) {
+      pd.style.display = '';
+      var proj = projection(t, di);
+      if (t.spent > GOAL)
+        pd.innerHTML = '⚠ <b>' + fmtBaht0(t.spent - GOAL) + ' over</b> your goal with ' +
+          di.left + ' days left.';
+      else if (proj > GOAL)
+        pd.innerHTML = '⚠ On pace for <b>~' + fmtBaht0(proj) + '</b> — about <b>' +
+          fmtBaht0(proj - GOAL) + ' over</b> your goal. Staying under means <b>' +
+          fmtBaht0((GOAL - t.spent) / Math.max(1, di.left)) + '/day</b> for the next ' +
+          di.left + ' days.';
+      else
+        pd.innerHTML = 'On pace for <b>~' + fmtBaht0(proj) + '</b> — inside your goal. ' +
+          '<b>' + fmtBaht0((GOAL - t.spent) / Math.max(1, di.left)) +
+          '/day</b> keeps it that way.';
+    } else pd.style.display = 'none';
+  }
+
+  // ---- attention: pace warning + unusual expenses (spec §4.4-4.5) ----
+  function renderAttention(t, di) {
+    var wrap = document.getElementById('att'),
+        title = document.getElementById('att-title');
+    var GOAL = monthGoal(), items = unusualItems(key(cur)), html = '';
+    var overPace = di.current && GOAL && projection(t, di) > GOAL;
+    if (overPace)
+      html += '<div class="att-card warn"><b>Pace warning.</b> Projected ~' +
+        fmtBaht0(projection(t, di)) + ' against a ' + fmtBaht0(GOAL) + ' goal.' +
+        (items.length ? ' The overshoot is partly the unusual purchase' +
+          (items.length > 1 ? 's' : '') + ' below.' : '') + '</div>';
+    items.forEach(function (u) {
+      var r = u.r, c = (r.Category || 'Other spending').trim() || 'Other spending';
+      html += '<div class="att-card odd">' + Mock.catEmoji(c) + ' <b>' + entryDesc(r) +
+        ' · ' + fmtBaht0(parseFloat(r.Amount) || 0) + '</b> (' + entryDate(r) + ', ' +
+        Mock.escapeHtml(c) + ')<div class="sub">' + u.mult + '× your typical ' +
+        Mock.escapeHtml(c) + ' purchase (median ' + fmtBaht0(u.med) + ').</div></div>';
+    });
+    title.style.display = html ? '' : 'none';
+    wrap.innerHTML = html;
+  }
+
+  // ---- share-of-total bar (top 5 + Other, on net numbers) ----
+  function renderShare(t) {
+    var card = document.getElementById('share-card');
+    if (t.spent <= 0) { Mock.softFail(card, 'No spending to break down this month.'); return; }
+    var ranked = Object.keys(t.byCat).map(function (c) { return [c, t.byCat[c]]; })
+      .sort(function (a, b) { return b[1] - a[1]; });
+    var top = ranked.slice(0, 5);
+    var restTotal = ranked.slice(5).reduce(function (s, e) { return s + e[1]; }, 0);
+    var items = top.map(function (e, i) {
+      return { name: e[0], val: e[1], color: i === 0 ? AMBER : GRAYS[i] };
+    });
+    if (restTotal > 0) items.push({
+      name: 'Other (' + (ranked.length - 5) + ' cats)', val: restTotal, color: GRAYS[5] });
+    var bar = items.map(function (it) {
+      return '<div style="width:' + (it.val / t.spent * 100) + '%;background:' +
+        it.color + '"></div>';
+    }).join('');
+    var legend = items.map(function (it) {
+      var pct = Math.round(it.val / t.spent * 100);
+      return '<span class="item"><span class="sw" style="background:' + it.color +
+        '"></span><span class="nm">' + Mock.catEmoji(it.name) + ' ' +
+        Mock.escapeHtml(it.name) + '</span><span class="pc">' + pct + '%</span></span>';
+    }).join('');
+    card.innerHTML = '<div class="sharebar">' + bar + '</div><div class="legend">' +
+      legend + '</div>';
+  }
+
+  // ---- Monthly Actual Spending: comparisons + 6-month bars (spec §4.3) ----
+  function renderHistory(t, di) {
+    var card = document.getElementById('hist-card');
+    var vals = [], labels = [];
+    for (var i = 5; i >= 0; i--) {
+      var d = shiftMonth(cur, -i);
+      labels.push(d.toLocaleDateString('en-GB', { month: 'short' }));
+      vals.push(i === 0 ? t.spent : computeMonth(key(d)).spent);
+    }
+    // dashed average = mean full-month real spend of the 6 months before `cur`
+    var avgSum = 0;
+    for (var j = 1; j <= 6; j++) avgSum += computeMonth(key(shiftMonth(cur, -j))).spent;
+    var avg = avgSum / 6;
+    // comparisons — same-day for the current month, full-month otherwise
+    var lastCmp, avgCmp;
+    if (di.current) {
+      lastCmp = cumThroughDay(key(shiftMonth(cur, -1)), di.elapsed);
+      var s2 = 0;
+      for (var k2 = 1; k2 <= 6; k2++)
+        s2 += cumThroughDay(key(shiftMonth(cur, -k2)), di.elapsed);
+      avgCmp = s2 / 6;
+    } else { lastCmp = vals[4]; avgCmp = avg; }
+    var dLast = t.spent - lastCmp, dAvg = t.spent - avgCmp;
+    var sd = di.current ? ', same day' : '';
+    function cmpRow(lbl, base, dv) {
+      return '<div class="cmp-row"><span class="lbl">' + lbl + sd + ' (' +
+        fmtBaht0(base) + ')</span><span class="val ' + (dv > 0 ? 'up' : 'down') + '">' +
+        (dv > 0 ? '+' : '−') + fmtBaht0(Math.abs(dv)) + '</span></div>';
+    }
+    var lead = dAvg > 0 ? 'ahead of' : 'behind';
+    card.innerHTML = '<div class="hist-lead">You\'re running <b>' + lead +
+      ' your usual pace</b>.</div>' +
+      cmpRow('vs last month', lastCmp, dLast) +
+      cmpRow('vs 6-month average', avgCmp, dAvg) +
+      '<div class="chart" id="mom"></div>' +
+      '<div class="chart-note">Dashed line = 6-month average (' + fmtBaht0(avg) + ').' +
+      (di.current ? ' ' + labels[5] + ' = so far + pale projection.' : '') + '</div>';
+    drawMomBars(labels, vals, avg, di.current ? projection(t, di) : null);
+  }
+
+  function drawMomBars(labels, vals, avg, projOrNull) {
+    var box = document.getElementById('mom');
+    var W = box.clientWidth || 320, H = 120;
+    var pL = 38, pR = 8, pT = 12, pB = 16;
+    var maxV = Math.max.apply(null, vals.concat([avg, projOrNull || 0, 1])) * 1.1;
+    function X(i) { var bw = (W - pL - pR) / 6; return pL + bw * i + bw / 2; }
+    function Y(v) { return (H - pB) - (H - pB - pT) * v / maxV; }
+    function fmtK(v) {
+      return v >= 1000 ? '฿' + (Math.round(v / 100) / 10) + 'k' : '฿' + Math.round(v);
+    }
+    var bw = (W - pL - pR) / 6 * 0.56;
+    var stepGuess = maxV / 3;
+    var mag = Math.pow(10, Math.floor(Math.log(stepGuess) / Math.LN10));
+    var stepN = mag * (stepGuess / mag <= 1 ? 1 : stepGuess / mag <= 2 ? 2 :
+                       stepGuess / mag <= 5 ? 5 : 10);
+    var m = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+    for (var v = stepN; v <= maxV; v += stepN)
+      m += '<line x1="' + pL + '" y1="' + Y(v) + '" x2="' + (W - pR) + '" y2="' + Y(v) +
+           '" stroke="rgba(128,128,128,.14)"/>' +
+           '<text x="' + (pL - 4) + '" y="' + (Y(v) + 3) + '" text-anchor="end" ' +
+           'font-size="8" fill="#a09a8c">' + fmtK(v) + '</text>';
+    vals.forEach(function (val, i) {
+      if (i === 5 && projOrNull !== null && projOrNull > val)
+        m += '<rect x="' + (X(i) - bw / 2) + '" y="' + Y(projOrNull) + '" width="' + bw +
+             '" height="' + ((H - pB) - Y(projOrNull)) + '" fill="' + AMBER +
+             '" opacity=".28" rx="3"/>';
+      m += '<rect x="' + (X(i) - bw / 2) + '" y="' + Y(val) + '" width="' + bw +
+           '" height="' + Math.max(0, (H - pB) - Y(val)) + '" fill="' +
+           (i === 5 ? AMBER : GRAY) + '" rx="3"/>';
+    });
+    m += '<line x1="' + pL + '" y1="' + Y(avg) + '" x2="' + (W - pR) + '" y2="' + Y(avg) +
+         '" stroke="#6b6354" stroke-width="1.3" stroke-dasharray="5 3"/>';
+    labels.forEach(function (mn, i) {
+      m += '<text x="' + X(i) + '" y="' + (H - 3) + '" text-anchor="middle" ' +
+           'font-size="8.5" fill="#a09a8c"' + (i === 5 ? ' font-weight="700"' : '') +
+           '>' + mn + '</text>';
+    });
+    m += '</svg>';
+    box.innerHTML = m;
+  }
+
+  // ---- Income / Saving expandable rows (paybacks listed but excluded) ----
+  function inflowRow(elId, emoji, name, total, cls, entries, note, emptyMsg) {
+    var entriesHtml = entries.length ? entries.map(function (e) {
+      var excl = e.excl ? ' excl' : '';
+      var tag = e.excl ? ' <span class="x-tag">excluded</span>' : '';
+      if (e.excl) {
+        // Settlement link chip: → Sxxx when a settlement's income_ref points
+        // at this row; quiet "no settlement" otherwise (orphan surfacing).
+        var sid = incomeRefMap[String(e.r.RefID || '').trim()];
+        tag += sid
+          ? ' <span class="x-tag" style="background:var(--green-soft);color:var(--green);border-color:transparent">→ ' +
+            Mock.escapeHtml(sid) + '</span>'
+          : ' <span class="x-tag">no settlement</span>';
+      }
+      return '<div class="entry' + excl + '" data-ref="' +
+        Mock.escapeHtml(e.r.RefID || '') + '"><span class="ed">' + entryDate(e.r) +
+        '</span><span class="en">' + entryDesc(e.r) + tag + '</span>' +
+        '<span class="ea">' + fmtBaht0(parseFloat(e.r.Amount) || 0) + '</span></div>';
+    }).join('') : '<div class="entry empty">' + emptyMsg + '</div>';
+    if (note) entriesHtml += '<div class="excl-note">' + note + '</div>';
+    var row = document.createElement('div');
+    row.className = 'cat-row';
+    row.innerHTML = '<div class="cat-head"><span class="cat-name"><span class="nm">' +
+      emoji + ' ' + name + '</span></span><span class="cat-right" style="color:' +
+      (cls === 'inflow' ? INCOME_GREEN : SAVING_BLUE) + '">' + fmtBaht0(total) +
+      ' <span class="chev">▶</span></span></div>' +
+      '<div class="gtrack"><div class="gfill ' + cls + '" style="width:100%"></div></div>' +
+      '<div class="entries">' + entriesHtml + '</div>';
+    row.addEventListener('click', function (ev) {
+      if (ev.target.closest('.entry[data-ref]')) return;
+      row.classList.toggle('open');
+    });
+    var wrap = document.getElementById(elId);
+    wrap.innerHTML = '';
+    wrap.appendChild(row);
+  }
+  function renderInflows(t) {
+    var incomeEntries = t.incomeRows.slice()
+      .sort(function (a, b) { return String(a.Date) < String(b.Date) ? -1 : 1; })
+      .map(function (r) { return { r: r, excl: isPayback(r.Category) }; });
+    inflowRow('income', '💰', 'Real income', t.income, 'inflow', incomeEntries,
+      t.paybacks > 0
+        ? 'Excluded rows are paybacks — they clear what was owed to you, not income.'
+        : '', 'No income this month');
+    var savingEntries = t.savingRows.slice()
+      .sort(function (a, b) { return String(a.Date) < String(b.Date) ? -1 : 1; })
+      .map(function (r) { return { r: r, excl: false }; });
+    inflowRow('saving', '🏦', 'Saving', t.saving, 'saving', savingEntries, '',
+      'No saving this month');
+  }
+
+  // ---- Where it went: goal micro-bars + net/gross entries + settle tags ----
+  function renderCats(t) {
+    var wrap = document.getElementById('cats');
+    var ranked = Object.keys(t.byCat).map(function (c) { return [c, t.byCat[c]]; })
+      .sort(function (a, b) { return b[1] - a[1]; });
+    if (!ranked.length) { Mock.softFail(wrap, 'No spending this month.'); return; }
+    wrap.innerHTML = '';
+    var gcats = (goals && goals.categories) || {};
+    ranked.forEach(function (e, idx) {
+      var cat = e[0], amt = e[1], goal = parseFloat(gcats[cat]) || 0;
+      var entries = t.spendRows.filter(function (r) {
+        return ((r.Category || 'Other spending').trim() || 'Other spending') === cat;
+      }).sort(function (a, b) { return String(a.Date) < String(b.Date) ? -1 : 1; });
+      var entriesHtml = entries.length ? entries.map(function (r) {
+        var tag = '', badge = '', amtHtml;
+        if (isFlagged(r)) {
+          var sid = String(r.settlement_id || '').trim();
+          var st = sid && settledSet[sid] ? ['settled', '✓ Settled'] :
+                   sid && pendingSet[sid] ? ['pending', 'Pending'] :
+                                            ['unsettled', 'Unsettled'];
+          tag = ' <span class="settle-tag ' + st[0] + '">' + st[1] + '</span>';
+          if (cat !== ROONG) badge = ' <span class="flag-badge">flagged</span>';
+          amtHtml = '<span class="gross">' + fmtBaht0(parseFloat(r.Amount) || 0) +
+            '</span>' + fmtBaht0(netOf(r));
+        } else amtHtml = fmtBaht0(parseFloat(r.Amount) || 0);
+        return '<div class="entry" data-ref="' + Mock.escapeHtml(r.RefID || '') + '">' +
+          '<span class="ed">' + entryDate(r) + '</span>' +
+          '<span class="en">' + entryDesc(r) + tag + badge + '</span>' +
+          '<span class="ea">' + amtHtml + '</span></div>';
+      }).join('') : '<div class="entry empty">No entries</div>';
+      var over = goal > 0 && amt > goal;
+      var pctGoal = goal > 0 ? Math.round(amt / goal * 100) : null;
+      var fillCls = over ? 'gfill over' : (idx === 0 ? 'gfill top' : 'gfill');
+      var fillW = goal > 0 ? Math.min(100, pctGoal)
+                           : Math.round(amt / ranked[0][1] * 100);
+      var cap = goal > 0
+        ? '<div class="gcap"><span>' + (over
+            ? '<span class="over-txt">' + pctGoal + '% of goal — ' +
+              fmtBaht0(amt - goal) + ' over</span>'
+            : pctGoal + '% of ' + fmtBaht0(goal) + ' goal') +
+          '</span><span>' + fmtBaht0(goal) + '</span></div>'
+        : '';
+      var row = document.createElement('div');
+      row.className = 'cat-row';
+      row.innerHTML = '<div class="cat-head"><span class="cat-name">' +
+        Mock.catEmoji(cat) + ' <span class="nm">' + Mock.escapeHtml(cat) +
+        '</span></span><span class="cat-right">' + fmtBaht0(amt) +
+        ' <span class="chev">▶</span></span></div>' +
+        '<div class="gtrack"><div class="' + fillCls + '" style="width:' + fillW +
+        '%"></div></div>' + cap +
+        '<div class="entries">' + entriesHtml + '</div>';
+      row.addEventListener('click', function (ev) {
+        // A tap on an entry opens the editor (wired below) — it must not also
+        // collapse the category the user is reading.
+        if (ev.target.closest('.entry[data-ref]')) return;
+        row.classList.toggle('open');
+      });
+      wrap.appendChild(row);
+    });
+  }
+
+  // ---- v2 addition: every listed entry opens the shared editor ------------
+  // This is the ONLY behavioural change from the live monthly report. The
+  // layout, the maths, the projection and the section order are untouched.
+  document.body.addEventListener('click', function (ev) {
+    var el = ev.target.closest('.entry[data-ref]');
+    if (!el || !el.dataset.ref) return;
+    ev.stopPropagation();
+    var row = (rows || []).filter(function (r) { return r.RefID === el.dataset.ref; })[0];
+    if (!row) return;
+    V2.editSheet(row, {
+      config: cfg,
+      onSaved: function () {
+        delete dailyNet._c; delete dailyVarNet._c;
+        render();
+      },
+      onDeleted: function () {
+        rows = rows.filter(function (r) { return r.RefID !== el.dataset.ref; });
+        // The memoised daily maps are derived from `rows` — drop them or the
+        // pace curve keeps drawing the deleted row.
+        delete dailyNet._c; delete dailyVarNet._c;
+        render();
+      }
+    });
+  });
+
+  document.getElementById('prev').addEventListener('click', function () {
+    if (rows) { cur = shiftMonth(cur, -1); render(); }
+  });
+  document.getElementById('next').addEventListener('click', function () {
+    if (rows) { cur = shiftMonth(cur, 1); render(); }
+  });
+
+  // ---- Month picker modal ----
+  var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var modal = document.getElementById('picker-modal');
+  var yearLabel = document.getElementById('picker-year-label');
+  var chipsEl = document.getElementById('picker-month-chips');
+  var displayedYear = cur.getFullYear();
+
+  function monthsWithData() {
+    var set = {};
+    (rows || []).forEach(function (r) {
+      if (Mock.isDeleted(r)) return;
+      var mk = Mock.monthKey(r.Date);
+      if (mk.length >= 7) set[mk] = true;
+    });
+    return set;
+  }
+  function renderChips() {
+    var has = monthsWithData();
+    yearLabel.textContent = displayedYear;
+    chipsEl.innerHTML = '';
+    for (var m = 1; m <= 12; m++) {
+      var ym = displayedYear + '-' + String(m).padStart(2, '0');
+      var isCurrent = displayedYear === cur.getFullYear() && (m - 1) === cur.getMonth();
+      var chip = document.createElement('button');
+      chip.className = 'month-chip' + (isCurrent ? ' current' : (!has[ym] ? ' empty' : ''));
+      chip.textContent = MONTH_NAMES[m - 1];
+      (function (mm) {
+        chip.addEventListener('click', function () {
+          cur = new Date(displayedYear, mm - 1, 1);
+          render();
+          closePicker();
+        });
+      })(m);
+      chipsEl.appendChild(chip);
+    }
+  }
+  function openPicker() { if (!rows) return; displayedYear = cur.getFullYear(); renderChips(); modal.classList.add('open'); }
+  function closePicker() { modal.classList.remove('open'); }
+  document.getElementById('month-label-btn').addEventListener('click', openPicker);
+  document.getElementById('picker-close').addEventListener('click', closePicker);
+  modal.addEventListener('click', function (e) { if (e.target === modal) closePicker(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closePicker();
+  });
+  document.getElementById('prev-year').addEventListener('click', function () { displayedYear -= 1; renderChips(); });
+  document.getElementById('next-year').addEventListener('click', function () { displayedYear += 1; renderChips(); });
+
+  // ---- Goal-editor modal — persists via DataSource.saveGoals ----
+  var gmodal = document.getElementById('gmodal');
+  var gtoastEl = document.getElementById('gtoast'), gtoastT = null;
+  function goalToast(msg) {
+    gtoastEl.textContent = msg; gtoastEl.classList.add('show');
+    clearTimeout(gtoastT); gtoastT = setTimeout(function () { gtoastEl.classList.remove('show'); }, 2400);
+  }
+  function updateGoalTotal() {
+    var sum = 0;
+    Array.prototype.forEach.call(gmodal.querySelectorAll('[data-cat]'), function (inp) {
+      var v = parseInt(inp.value, 10); if (!isNaN(v) && v >= 0) sum += v;
+    });
+    document.getElementById('gm-total').textContent = fmtBaht0(sum);
+  }
+  function buildGoalsModal() {
+    var cats = (goals && goals.categories) ? goals.categories : {};
+    var entries = Object.keys(cats).filter(function (c) { return !isIncome(c) && !isSaving(c); })
+      .map(function (c) { return [c, cats[c]]; });
+    document.getElementById('gmodal-rows').innerHTML = entries.length ? entries.map(function (e) {
+      return '<div class="gmrow"><span class="gnm">' + Mock.catEmoji(e[0]) + ' ' +
+        Mock.escapeHtml(e[0]) + '</span><span>฿<input class="ginput" inputmode="numeric" data-cat="' +
+        Mock.escapeHtml(e[0]) + '" value="' + (parseInt(e[1], 10) || 0) + '"></span></div>';
+    }).join('') : '<div class="soft-note">No category goals found.</div>';
+    updateGoalTotal();
+  }
+  document.getElementById('gmodal-rows').addEventListener('input', updateGoalTotal);
+  function openGoals() { if (!goals) return; buildGoalsModal(); gmodal.classList.add('open'); }
+  function closeGoals() { gmodal.classList.remove('open'); }
+  document.getElementById('set-goal').addEventListener('click', openGoals);
+  document.getElementById('gmodal-close').addEventListener('click', closeGoals);
+  document.getElementById('gm-cancel').addEventListener('click', closeGoals);
+  gmodal.addEventListener('click', function (e) { if (e.target === gmodal) closeGoals(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && gmodal.classList.contains('open')) closeGoals();
+  });
+  document.getElementById('gm-save').addEventListener('click', async function () {
+    var btn = document.getElementById('gm-save');
+    if (btn.disabled) return;
+    var sum = 0, cats = {};
+    Array.prototype.forEach.call(gmodal.querySelectorAll('[data-cat]'), function (inp) {
+      var v = parseInt(inp.value, 10);
+      if (!isNaN(v) && v >= 0) { cats[inp.getAttribute('data-cat')] = v; sum += v; }
+    });
+    var prevLabel = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      var saved = await DataSource.saveGoals({ categories: cats });
+      goals = saved && saved.categories ? saved
+                                        : { categories: cats, monthly_total: sum };
+      render();
+      closeGoals();
+      goalToast('Goals saved ✓');
+    } catch (e) {
+      goalToast("Couldn't save goals — try again.");
+    } finally {
+      btn.disabled = false; btn.textContent = prevLabel;
+    }
+  });
+
+  var cfg = null;   // v2: hoisted so the shared entry editor can read it
+  // ---- bootstrap ----
+  (async function () {
+    try {
+      var cfgP = DataSource.loadConfig().catch(function () { return null; });
+      var goalsP = DataSource.loadGoals().catch(function () { return {}; });
+      var roongP = Promise.all([
+        DataSource.loadRoongPending().catch(function () { return []; }),
+        DataSource.loadRoongHistory().catch(function () { return []; }),
+      ]).then(function (res) {
+        function takeRefs(s) {
+          // income_ref: payback row RefID(s) that paid this settlement
+          // ('' unlinked, 'none' = no money movement) — 2026-07-19 spec.
+          String(s.income_ref || '').split('|').forEach(function (id) {
+            id = id.trim();
+            if (id && id !== 'none') incomeRefMap[id] = s.settlement_id;
+          });
+        }
+        (res[0] || []).forEach(function (s) { pendingSet[s.settlement_id] = true; takeRefs(s); });
+        (res[1] || []).forEach(function (s) { settledSet[s.settlement_id] = true; takeRefs(s); });
+      }).catch(function () {});
+
+      rows = await DataSource.loadDatabase();
+      cfg = await cfgP;                       // v2: page-scoped for the editor
+      isIncome = Mock.incomeTester(cfg);
+      isSaving = Mock.savingTester(cfg);
+      goals = await goalsP;
+      await roongP;
+      render();
+    } catch (e) {
+      document.getElementById('story').textContent =
+        "Couldn't load the report right now. Check your connection and reload.";
+      Mock.softFail(document.getElementById('share-card'), "Couldn't load data.");
+      Mock.softFail(document.getElementById('hist-card'), "Couldn't load history.");
+      Mock.softFail(document.getElementById('cats'), "Couldn't load categories.");
+    }
+  })();
+})();
+</script>
+<a class="back-link" href="../monthly_report.html"
+   style="display:block;text-align:center;font-size:12px;color:var(--text-faint);
+          margin:22px 0 8px">Open the current Monthly report</a>
+<script>
+  // v2 navigation shell + room for it above the page end.
+  document.body.style.paddingBottom = '96px';
+  V2.nav('report', {});
+</script>
+</body>
+</html>

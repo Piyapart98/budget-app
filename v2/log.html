@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>Log — Budget</title>
+<link rel="stylesheet" href="v2.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="backb" href="index.html">&#8249; Home</a>
+    <span class="ttl">Log</span>
+    <a class="iconbtn" href="verify.html" aria-label="Card statement check"
+       style="width:34px;height:34px;min-height:34px"></a>
+    <button class="backb" id="selbtn" style="padding-left:2px">Select</button>
+  </div>
+
+  <div class="searchbar">
+    <span id="searchicon"></span>
+    <input id="q" placeholder="Search description, note, ref…" aria-label="Search the log">
+    <button class="iconbtn" id="clearq" aria-label="Clear search"
+            style="width:32px;height:32px;min-height:32px;border:0;display:none"></button>
+  </div>
+  <div class="filtrow" id="filters"></div>
+  <div class="faint" id="stale" style="margin:2px 2px 8px"></div>
+
+  <div id="list"><div class="soft-note">Loading…</div></div>
+  <div id="more" style="margin-top:10px"></div>
+
+  <a class="livelink" href="../edit_log.html"><u>Open the current Edit log</u></a>
+</div>
+
+<script src="../warm-shared.js"></script>
+<script src="../data-source.js"></script>
+<script src="v2-shared.js"></script>
+<script>
+(function () {
+  'use strict';
+  var esc = V2.esc;
+
+  var STATE = {
+    rows: [], cfg: null, groups: null, flags: {}, verified: {refs:{}},
+    filter: 'all', q: '', limit: 120,
+    bulk: false, sel: {}
+  };
+  var PAGE = 120;
+
+  function selCount() { return Object.keys(STATE.sel).length; }
+  function isSpend(r) { return STATE.groups.isSpend(r.Category); }
+  function isIncome(r) { return STATE.groups.isIncome(r.Category); }
+  function isSaving(r) { return STATE.groups.isSaving(r.Category); }
+
+  var FILTERS = [
+    { key: 'all',     label: 'All',
+      test: function () { return true; } },
+    { key: 'flagged', label: 'Needs a look',
+      test: function (r) { return !!STATE.flags[r.RefID]; } },
+    { key: 'unver',   label: 'Unverified',
+      test: function (r) { return isSpend(r) && r.Card && !STATE.verified.refs[r.RefID]; } },
+    { key: 'nocard',  label: 'No card',
+      test: function (r) { return isSpend(r) && !r.Card; } },
+    { key: 'settle',  label: 'Unsettled',
+      test: function (r) { return String(r.Settle || '') === 'True' && !r.settlement_id; } }
+  ];
+  function filterDef(k) {
+    for (var i = 0; i < FILTERS.length; i++) if (FILTERS[i].key === k) return FILTERS[i];
+    return FILTERS[0];
+  }
+
+  function matchesQuery(r) {
+    if (!STATE.q) return true;
+    var q = STATE.q.toLowerCase();
+    return (String(r.Description || '') + ' ' + String(r.Note || '') + ' ' +
+            String(r.Category || '') + ' ' + String(r.RefID || '') + ' ' +
+            String(r.Card || '')).toLowerCase().indexOf(q) !== -1;
+  }
+
+  function visibleRows() {
+    var def = filterDef(STATE.filter);
+    return STATE.rows.filter(function (r) { return def.test(r) && matchesQuery(r); });
+  }
+
+  function renderFilters() {
+    document.getElementById('filters').innerHTML = FILTERS.map(function (f) {
+      var n = STATE.rows.filter(f.test).length;
+      return '<button class="chip tap ' + (STATE.filter === f.key ? 'on' : 'plain') + '" ' +
+             'data-filt="' + f.key + '">' + esc(f.label) + ' · ' + n + '</button>';
+    }).join('');
+  }
+
+  function chipsFor(r) {
+    var out = [];
+    out.push('<span class="chip plain">' + window.Mock.catEmoji(r.Category) + ' ' +
+             esc(r.Category || 'no category') + '</span>');
+    if (r.Card)  out.push('<span class="chip plain">' + esc(r.Card) + '</span>');
+    if (r.Note)  out.push('<span class="chip plain">' + esc(r.Note) + '</span>');
+    if (isSpend(r) && r.Card) {
+      out.push(STATE.verified.refs[r.RefID]
+        ? '<span class="chip ok">' + V2.icon('shield', 'sm') + ' verified</span>'
+        : '<span class="chip plain">unverified</span>');
+    }
+    if (String(r.Settle || '') === 'True' && !r.settlement_id) {
+      out.push('<span class="chip info">unsettled</span>');
+    }
+    if (r.settlement_id) {
+      out.push('<span class="chip ok">&rarr; ' + esc(r.settlement_id) + '</span>');
+    }
+    if (String(r.Edited || '') === 'Yes') out.push('<span class="chip plain">edited</span>');
+    return out.join('');
+  }
+
+  function render() {
+    renderFilters();
+    var rows = visibleRows();
+    var shown = rows.slice(0, STATE.limit);
+    var host = document.getElementById('list');
+
+    if (!rows.length) {
+      host.innerHTML = '<div class="empty"><span class="em">🔍</span>' +
+        '<h3>Nothing here</h3><p>No rows match this filter' +
+        (STATE.q ? ' and search' : '') + '.</p></div>';
+      document.getElementById('more').innerHTML = '';
+      renderBulkBar();
+      return;
+    }
+
+    var html = '', day = '';
+    shown.forEach(function (r) {
+      if (r.Date !== day) { day = r.Date; html += '<div class="daylab">' + esc(V2.niceDay(day)) + '</div>'; }
+      var on = !!STATE.sel[r.RefID];
+      var why = STATE.flags[r.RefID];
+      html +=
+        '<button class="logrow' + (on ? ' sel' : '') + '" data-ref="' + esc(r.RefID) + '">' +
+          (STATE.bulk
+            ? '<span class="tick' + (on ? ' on' : '') + '">' + (on ? V2.icon('check','sm') : '') + '</span>'
+            : '<span class="em">' + window.Mock.catEmoji(r.Category) + '</span>') +
+          '<span class="grow">' +
+            '<span class="row"><span class="grow trunc" style="font-weight:650">' +
+              esc(r.Description || '(no description)') + '</span>' +
+              '<span class="amt' + (isIncome(r) ? ' in' : isSaving(r) ? ' sav' : '') + '">' +
+              (isIncome(r) ? '+' : '−') + window.Mock.fmtBaht(r.Amount) + '</span></span>' +
+            '<span class="meta">' + chipsFor(r) + '</span>' +
+            (why ? '<span class="row" style="margin-top:6px;gap:6px;color:var(--amber-text);font-size:12px">' +
+                   V2.icon('alert','sm') + '<span>' + esc(why[0]) + '</span></span>' : '') +
+          '</span>' +
+          (STATE.bulk ? '' : '<span style="color:var(--text-faint);align-self:center">' +
+                             V2.icon('edit','sm') + '</span>') +
+        '</button>';
+    });
+    host.innerHTML = html;
+
+    document.getElementById('more').innerHTML = rows.length > shown.length
+      ? '<button class="btn btn-out" id="morebtn">Show ' +
+        Math.min(PAGE, rows.length - shown.length) + ' more · ' +
+        (rows.length - shown.length) + ' left</button>'
+      : '<p class="faint center">' + rows.length + ' row' + (rows.length === 1 ? '' : 's') + '</p>';
+    renderBulkBar();
+  }
+
+  function renderBulkBar() {
+    var old = document.getElementById('bulkbar');
+    if (old) old.remove();
+    var n = selCount();
+    if (!n) return;
+    var bar = document.createElement('div');
+    bar.className = 'bulkbar'; bar.id = 'bulkbar';
+    bar.innerHTML = '<span style="font-weight:650">' + n + ' selected</span>' +
+      '<button data-bulk="cat">Recategorise</button>' +
+      '<button data-bulk="card">Set card</button>' +
+      '<button class="go" data-bulk="del">Delete</button>';
+    document.body.appendChild(bar);
+  }
+
+  // ---- bulk actions: one shared reason, one submitEdits call ---------------
+  function reasonBlock() {
+    return '<div class="fl" style="margin-top:6px">Reason (logged to changelog.csv)</div>' +
+      '<div class="reasons" id="brs">' +
+      ['wrong category','wrong amount','wrong date','duplicate','typo','card correction']
+        .map(function (r) {
+          return '<button type="button" class="chip tap plain" data-reason="' + esc(r) + '">' +
+                 esc(r) + '</button>';
+        }).join('') + '</div>' +
+      '<input class="inp" id="brtext" placeholder="…or type your own reason" aria-label="Custom reason">';
+  }
+  function wireReasons() {
+    var chosen = { value: '' };
+    document.getElementById('brs').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-reason]'); if (!b) return;
+      [].forEach.call(this.querySelectorAll('[data-reason]'), function (x) {
+        x.classList.remove('on'); x.classList.add('plain');
+      });
+      b.classList.add('on'); b.classList.remove('plain');
+      chosen.value = b.dataset.reason;
+      document.getElementById('brtext').value = '';
+    });
+    return function () {
+      var typed = document.getElementById('brtext').value.trim();
+      return typed || chosen.value;
+    };
+  }
+
+  function selectedRows() {
+    return STATE.rows.filter(function (r) { return STATE.sel[r.RefID]; });
+  }
+
+  function bulkCategory() {
+    var g = STATE.groups;
+    function grid(list) {
+      return '<div class="catgrid">' + list.map(function (c) {
+        return '<button type="button" class="catbtn" data-pick="' + esc(c) + '">' +
+               '<span>' + window.Mock.catEmoji(c) + '</span><span class="trunc">' + esc(c) + '</span></button>';
+      }).join('') + '</div>';
+    }
+    V2.sheet('<h3>Recategorise ' + selCount() + ' row' + (selCount() === 1 ? '' : 's') + '</h3>' +
+      '<div class="sh-sub">One reason covers the whole batch</div>' +
+      reasonBlock() +
+      '<div class="grouplab">Spending</div>' + grid(g.spend) +
+      '<div class="grouplab">Income</div>' + grid(g.income) +
+      '<div class="grouplab">Saving</div>' + grid(g.saving) +
+      '<div style="height:10px"></div>');
+    var getReason = wireReasons();
+    document.getElementById('v2-sheet').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-pick]'); if (!b) return;
+      applyBulk({ Category: b.dataset.pick }, getReason(),
+                'recategorised to ' + b.dataset.pick);
+    });
+  }
+
+  function bulkCard() {
+    var cards = V2.cardNames(STATE.cfg);
+    V2.sheet('<h3>Set card for ' + selCount() + ' row' + (selCount() === 1 ? '' : 's') + '</h3>' +
+      '<div class="sh-sub">One reason covers the whole batch</div>' +
+      reasonBlock() +
+      ['', ].concat(cards).map(function (c) {
+        return '<button type="button" class="field" data-card="' + esc(c) + '">' +
+               '<span class="grow v">' + (c ? esc(c) : V2.CARD_NONE) + '</span>' +
+               V2.icon('right','sm') + '</button>';
+      }).join(''));
+    var getReason = wireReasons();
+    document.getElementById('v2-sheet').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-card]'); if (!b) return;
+      applyBulk({ Card: b.dataset.card }, getReason(),
+                b.dataset.card ? 'moved to ' + b.dataset.card : 'set to cash');
+    });
+  }
+
+  async function applyBulk(fields, reason, what) {
+    if (!reason) { V2.toast('Pick or type a reason first'); return; }
+    var rows = selectedRows();
+    var edits = rows.map(function (r) { return { RefID: r.RefID, Fields: fields }; });
+    V2.busy('Saving ' + rows.length + ' row' + (rows.length === 1 ? '' : 's') + '…');
+    try {
+      var res = await DataSource.submitEdits({ Reason: reason, Edits: edits });
+      rows.forEach(function (r) {
+        Object.keys(fields).forEach(function (k) { r[k] = fields[k]; });
+        r.Edited = 'Yes';
+      });
+      STATE.sel = {}; STATE.bulk = false;
+      document.getElementById('selbtn').textContent = 'Select';
+      V2.closeSheet();
+      recomputeFlags();
+      render();
+      V2.toast(res.fields + ' change' + (res.fields === 1 ? '' : 's') + ' across ' +
+               res.rows + ' row' + (res.rows === 1 ? '' : 's') + ' · ' + what);
+    } catch (e) {
+      V2.toast('Could not save: ' + e.message);
+    }
+  }
+
+  function bulkDelete() {
+    var n = selCount();
+    V2.sheet('<h3>Delete ' + n + ' row' + (n === 1 ? '' : 's') + '?</h3>' +
+      '<div class="sh-sub">Soft delete — the rows stay in the file, marked deleted, ' +
+      'and can be restored.</div>' + reasonBlock() +
+      '<button type="button" class="btn btn-red" style="margin-top:8px" id="dogo">' +
+      V2.icon('trash','sm') + ' Delete ' + n + ' row' + (n === 1 ? '' : 's') + '</button>');
+    var getReason = wireReasons();
+    document.getElementById('dogo').addEventListener('click', async function () {
+      var reason = getReason();
+      if (!reason) { V2.toast('A reason is required to delete'); return; }
+      var rows = selectedRows();
+      this.disabled = true;
+      V2.busy('Deleting ' + rows.length + '…');
+      try {
+        // No bulk delete endpoint by design — soft delete stays one row at a
+        // time so a partial failure is obvious rather than silent.
+        for (var i = 0; i < rows.length; i++) {
+          await DataSource.submitDelete({ RefID: rows[i].RefID, Reason: reason });
+          rows[i].Deleted = 'True';
+        }
+        STATE.rows = STATE.rows.filter(function (r) { return !window.Mock.isDeleted(r); });
+        STATE.sel = {}; STATE.bulk = false;
+        document.getElementById('selbtn').textContent = 'Select';
+        V2.closeSheet(); recomputeFlags(); render();
+        V2.toast(rows.length + ' row' + (rows.length === 1 ? '' : 's') + ' soft-deleted');
+      } catch (e) {
+        V2.toast('Stopped: ' + e.message);
+        render();
+      }
+    });
+  }
+
+  function recomputeFlags() {
+    STATE.flags = V2.flags(STATE.rows, STATE.cfg);
+  }
+
+  // ---- events -------------------------------------------------------------
+  document.getElementById('filters').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-filt]'); if (!b) return;
+    STATE.filter = b.dataset.filt; STATE.limit = PAGE; render();
+  });
+
+  document.getElementById('list').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-ref]'); if (!b) return;
+    var ref = b.dataset.ref;
+    var row = STATE.rows.filter(function (r) { return r.RefID === ref; })[0];
+    if (!row) return;
+    if (STATE.bulk) {
+      if (STATE.sel[ref]) delete STATE.sel[ref]; else STATE.sel[ref] = true;
+      render();
+      return;
+    }
+    V2.editSheet(row, {
+      config: STATE.cfg,
+      onSaved: function () { recomputeFlags(); render(); },
+      onDeleted: function () {
+        STATE.rows = STATE.rows.filter(function (r) { return r.RefID !== ref; });
+        recomputeFlags(); render();
+      }
+    });
+  });
+
+  document.getElementById('more').addEventListener('click', function (e) {
+    if (!e.target.closest('#morebtn')) return;
+    STATE.limit += PAGE; render();
+  });
+
+  document.getElementById('selbtn').addEventListener('click', function () {
+    STATE.bulk = !STATE.bulk;
+    if (!STATE.bulk) STATE.sel = {};
+    this.textContent = STATE.bulk ? 'Done' : 'Select';
+    render();
+  });
+
+  document.body.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-bulk]'); if (!b) return;
+    if (b.dataset.bulk === 'cat')  bulkCategory();
+    if (b.dataset.bulk === 'card') bulkCard();
+    if (b.dataset.bulk === 'del')  bulkDelete();
+  });
+
+  var qEl = document.getElementById('q'), qTimer = null;
+  qEl.addEventListener('input', function () {
+    document.getElementById('clearq').style.display = qEl.value ? 'flex' : 'none';
+    clearTimeout(qTimer);
+    qTimer = setTimeout(function () {
+      STATE.q = qEl.value.trim(); STATE.limit = PAGE; render();
+    }, 180);
+  });
+  document.getElementById('clearq').addEventListener('click', function () {
+    qEl.value = ''; STATE.q = ''; this.style.display = 'none'; STATE.limit = PAGE; render();
+  });
+
+  // ---- boot ---------------------------------------------------------------
+  (async function () {
+    document.getElementById('searchicon').innerHTML = V2.icon('search', 'sm');
+    document.getElementById('clearq').innerHTML = V2.icon('x', 'sm');
+    document.querySelector('.topbar .iconbtn').innerHTML = V2.icon('shield', 'sm');
+    V2.wireTopbar();
+
+    var params = new URLSearchParams(location.search);
+    if (params.get('filter')) STATE.filter = params.get('filter');
+    if (params.get('q')) { STATE.q = params.get('q'); qEl.value = STATE.q; }
+
+    try {
+      var results = await Promise.all([
+        DataSource.loadDatabase(),
+        DataSource.loadConfig().catch(function () { return null; }),
+        DataSource.loadVerification().catch(function () { return null; })
+      ]);
+      STATE.rows = V2.live(results[0]).sort(function (a, b) {
+        return String(b.Date).localeCompare(String(a.Date)) ||
+               String(b.RefID).localeCompare(String(a.RefID));
+      });
+      STATE.cfg = results[1];
+      STATE.groups = V2.catGroups(STATE.cfg);
+      STATE.verified = V2.verifiedRefs(results[2]);
+      recomputeFlags();
+
+      document.getElementById('stale').textContent = STATE.verified.generatedAt
+        ? 'Verified marks reflect the statement check of ' +
+          new Date(STATE.verified.generatedAt).toLocaleDateString('en-GB',
+            { day: 'numeric', month: 'short' }) + ' — newer rows will read unverified.'
+        : 'No statement has been checked yet, so nothing shows as verified.';
+
+      V2.nav('log', { review: 0, settle: 0 });
+      render();
+      // Badges need the drafts count; don't hold up the list for it.
+      DataSource.loadDrafts().then(function (d) {
+        V2.nav('log', { review: (d || []).length });
+      }).catch(function () {});
+    } catch (e) {
+      document.getElementById('list').innerHTML =
+        '<div class="err">Could not load the ledger: ' + esc(e.message) + '</div>';
+    }
+  })();
+})();
+</script>
+</body>
+</html>

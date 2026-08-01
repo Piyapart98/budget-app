@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>New entry — Budget</title>
+<link rel="stylesheet" href="v2.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="backb" href="index.html">&#8249; Home</a>
+    <span class="ttl">New entry</span>
+    <span style="width:64px"></span>
+  </div>
+
+  <div class="amount-hero center" style="padding:10px 0 4px">
+    <div id="amt" style="font-family:var(--serif);font-size:52px;line-height:1.05;
+         font-variant-numeric:tabular-nums;color:var(--text-faint)">฿0</div>
+    <button class="backb" id="datebtn" style="margin:2px auto 0;color:var(--text-faint);font-weight:400">
+      <span id="datelabel"></span></button>
+    <input type="date" id="f-date" class="inp" style="display:none;max-width:220px;margin:6px auto 0">
+  </div>
+
+  <div class="freq" id="freq" style="display:flex;gap:7px;overflow-x:auto;padding:10px 18px;
+       margin:0 -18px;scrollbar-width:none"></div>
+
+  <div id="catslot"></div>
+  <div id="details"></div>
+  <button class="backb" id="disclose" style="color:var(--green);padding:10px 2px"></button>
+
+  <div class="keypad" id="keypad" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px"></div>
+
+  <button class="btn btn-green" id="save" style="margin-top:12px"></button>
+  <p class="faint center" style="margin-top:9px">
+    Nothing is written until you tap Save — same gate as today.</p>
+
+  <a class="livelink" href="../entry_form.html"><u>Open the current entry form</u></a>
+</div>
+
+<script src="../warm-shared.js"></script>
+<script src="../data-source.js"></script>
+<script src="v2-shared.js"></script>
+<script>
+(function () {
+  'use strict';
+  var esc = V2.esc;
+
+  // Categories that settle items at entry time. Mirrors
+  // run_pipeline.SETTLING_INCOME_CATEGORIES; kept identical to entry_form.html.
+  var SETTLE_CATS = {
+    'Reimbursement':        { label: 'Reimburses', verb: 'reimburse', noun: 'reimbursement' },
+    'Payback from someone': { label: 'Pays back',  verb: 'pay back',  noun: 'payback' }
+  };
+  var ROONG_CAT = 'With Roong';
+
+  var S = {
+    amt: '', cat: '', card: '', desc: '', note: '',
+    settle: false, settleTouched: false,
+    open: false, date: new Date().toISOString().slice(0, 10),
+    cfg: null, groups: null, rows: [], freq: [],
+    pool: null, picks: {}, poolOpen: false
+  };
+
+  function settleCat() { return SETTLE_CATS[S.cat] || null; }
+  function amountNum() { return parseFloat(S.amt) || 0; }
+
+  // ---- amount -------------------------------------------------------------
+  function renderAmount() {
+    var el = document.getElementById('amt');
+    var n = S.amt === '' ? 0 : Number(S.amt);
+    el.textContent = '฿' + (S.amt === '' ? '0'
+      : (String(S.amt).indexOf('.') !== -1 ? S.amt : n.toLocaleString('en-US')));
+    el.style.color = S.amt === '' ? 'var(--text-faint)' : 'var(--text)';
+    document.getElementById('datelabel').textContent =
+      V2.niceDay(S.date) + ' · tap to change';
+  }
+  function key(k) {
+    if (k === 'del') S.amt = S.amt.slice(0, -1);
+    else if (k === '.') { if (S.amt.indexOf('.') === -1 && S.amt) S.amt += '.'; }
+    else if (/^\d$/.test(k)) {
+      var dot = S.amt.indexOf('.');
+      if (dot !== -1 && S.amt.length - dot > 2) return;   // 2 decimal places
+      if (S.amt.replace('.', '').length >= 9) return;
+      S.amt = (S.amt === '0' ? '' : S.amt) + k;
+    }
+    renderAmount(); renderSave(); renderPool();
+  }
+  document.getElementById('keypad').innerHTML =
+    [1,2,3,4,5,6,7,8,9,'.',0,'del'].map(function (k) {
+      return '<button class="key" data-k="' + k + '" style="background:var(--surface);' +
+        'border:1px solid var(--border);border-radius:var(--r-m);height:58px;font-size:23px;' +
+        'font-weight:600;font-variant-numeric:tabular-nums;cursor:pointer;display:flex;' +
+        'align-items:center;justify-content:center"' +
+        (k === 'del' ? ' aria-label="Delete"' : '') + '>' +
+        (k === 'del' ? V2.icon('left', 'sm') : k) + '</button>';
+    }).join('');
+  document.getElementById('keypad').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-k]'); if (b) key(b.dataset.k);
+  });
+
+  // ---- date ---------------------------------------------------------------
+  document.getElementById('datebtn').addEventListener('click', function () {
+    var d = document.getElementById('f-date');
+    d.style.display = d.style.display === 'none' ? 'block' : 'none';
+    d.value = S.date;
+    if (d.style.display === 'block') d.focus();
+  });
+  document.getElementById('f-date').addEventListener('change', function () {
+    S.date = this.value || S.date;
+    this.style.display = 'none';
+    renderAmount();
+  });
+
+  // ---- frequent chips (auto-derived; this screen only) --------------------
+  function renderFreq() {
+    var host = document.getElementById('freq');
+    if (!S.freq.length) { host.style.display = 'none'; return; }
+    host.style.display = 'flex';
+    host.innerHTML = S.freq.map(function (f, i) {
+      return '<button class="freqchip" data-freq="' + i + '" style="flex:0 0 auto;' +
+        'background:var(--surface);border:1px solid var(--border);border-radius:999px;' +
+        'padding:8px 13px;font-size:13px;cursor:pointer;display:flex;gap:6px;' +
+        'align-items:center;min-height:40px">' +
+        '<span>' + window.Mock.catEmoji(f.cat) + '</span><span>' + esc(f.desc) + '</span>' +
+        '<b style="font-variant-numeric:tabular-nums">฿' + f.amount + '</b></button>';
+    }).join('');
+  }
+  document.getElementById('freq').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-freq]'); if (!b) return;
+    var f = S.freq[+b.dataset.freq];
+    S.amt = String(f.amount); S.cat = f.cat; S.desc = f.desc;
+    applySettleAuto();
+    renderAll();
+    V2.toast(f.desc + ' ฿' + f.amount + ' filled in — adjust or save');
+  });
+
+  // ---- category -----------------------------------------------------------
+  function applySettleAuto() {
+    if (S.settleTouched) return;
+    S.settle = (S.cat === ROONG_CAT);
+    if (!settleCat()) { S.picks = {}; S.poolOpen = false; }
+  }
+  function renderCat() {
+    var host = document.getElementById('catslot');
+    if (!S.cat) {
+      host.innerHTML = '<button class="field" id="catbtn">' +
+        '<div class="grow"><span class="lab">Category</span>' +
+        '<span class="v" style="color:var(--text-faint)">Pick one</span></div>' +
+        V2.icon('edit', 'sm') + '</button>';
+    } else {
+      host.innerHTML = '<div class="pred" style="display:flex;align-items:center;gap:7px;' +
+        'background:var(--green-soft);border:1px solid #cfe3d6;border-radius:var(--r-m);' +
+        'padding:11px 13px;margin-bottom:8px;font-size:13.5px;color:var(--green)">' +
+        '<span class="grow"><b>' + window.Mock.catEmoji(S.cat) + ' ' + esc(S.cat) + '</b></span>' +
+        '<button class="penbtn" id="catbtn" aria-label="Change category">' +
+        V2.icon('edit', 'sm') + '</button></div>';
+    }
+    document.getElementById('catbtn').addEventListener('click', openCatSheet);
+  }
+  function openCatSheet() {
+    var g = S.groups;
+    function grid(list) {
+      return '<div class="catgrid">' + list.map(function (c) {
+        return '<button type="button" class="catbtn' + (c === S.cat ? ' on' : '') +
+          '" data-pick="' + esc(c) + '"><span>' + window.Mock.catEmoji(c) +
+          '</span><span class="trunc">' + esc(c) + '</span></button>';
+      }).join('') + '</div>';
+    }
+    V2.sheet('<h3>Choose a category</h3><div class="sh-sub">Spending, income or saving</div>' +
+      '<div class="grouplab">Spending</div>' + grid(g.spend) +
+      '<div class="grouplab">Income</div>' + grid(g.income) +
+      '<div class="grouplab">Saving</div>' + grid(g.saving) +
+      '<div style="height:10px"></div>');
+    document.getElementById('v2-sheet').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-pick]'); if (!b) return;
+      S.cat = b.dataset.pick;
+      applySettleAuto();
+      V2.closeSheet(); renderAll();
+    });
+  }
+
+  // ---- details (progressive disclosure) -----------------------------------
+  function renderDetails() {
+    var host = document.getElementById('details');
+    var d = document.getElementById('disclose');
+    if (!S.open) {
+      host.innerHTML = '';
+      d.innerHTML = V2.icon('down', 'sm') + ' Description, card, settlement…';
+      return;
+    }
+    d.innerHTML = V2.icon('up', 'sm') + ' Fewer details';
+    var cards = V2.cardNames(S.cfg);
+    var sc = settleCat();
+    host.innerHTML =
+      '<div class="fblock"><label class="fl" for="f-desc">Description</label>' +
+        '<input class="inp" id="f-desc" value="' + esc(S.desc) + '" placeholder="What was this for?"></div>' +
+      '<div class="fgrid">' +
+        '<div class="fblock"><label class="fl" for="f-card">Card</label>' +
+          '<select class="inp" id="f-card"><option value="">' + V2.CARD_NONE + '</option>' +
+          cards.map(function (c) {
+            return '<option value="' + esc(c) + '"' + (S.card === c ? ' selected' : '') + '>' +
+                   esc(c) + '</option>';
+          }).join('') + '</select></div>' +
+        '<div class="fblock"><label class="fl" for="f-note">Note</label>' +
+          '<input class="inp" id="f-note" value="' + esc(S.note) + '" placeholder="optional"></div>' +
+      '</div>' +
+      '<div class="toggle-row"><div class="grow">' +
+        '<div style="font-weight:600;font-size:14px">Include in settlement</div>' +
+        '<div class="faint">' + (S.settle && !S.settleTouched && S.cat === ROONG_CAT
+          ? 'auto-ticked — category is “With Roong”'
+          : 'shows up on the settlement page') + '</div></div>' +
+        '<span class="tick' + (S.settle ? ' on' : '') + '" id="f-settle" role="checkbox" ' +
+        'tabindex="0" aria-checked="' + S.settle + '">' +
+        (S.settle ? V2.icon('check', 'sm') : '') + '</span></div>' +
+      (sc ? '<div id="poolslot"></div>' : '');
+
+    document.getElementById('f-desc').addEventListener('input', function () { S.desc = this.value; });
+    document.getElementById('f-note').addEventListener('input', function () { S.note = this.value; });
+    document.getElementById('f-card').addEventListener('change', function () { S.card = this.value; });
+    var t = document.getElementById('f-settle');
+    function toggle() {
+      S.settle = !S.settle; S.settleTouched = true; renderDetails();
+    }
+    t.addEventListener('click', toggle);
+    t.addEventListener('keydown', function (e) {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); }
+    });
+    renderPool();
+  }
+  document.getElementById('disclose').addEventListener('click', function () {
+    S.open = !S.open; renderDetails();
+  });
+
+  // ---- reimburse / payback picker -----------------------------------------
+  function picksTotal() {
+    return Object.keys(S.picks).reduce(function (t, k) {
+      return t + (parseFloat(S.picks[k]) || 0);
+    }, 0);
+  }
+  async function ensurePool() {
+    if (S.pool !== null) return;
+    S.pool = [];
+    try {
+      var pool = await DataSource.loadRoongUnsettled();
+      // An income/saving row can carry Settle=True; keep inflows out of a pool
+      // that is supposed to hold expenses. Same filter as review.html.
+      S.pool = (pool || []).filter(function (r) {
+        return !S.groups.isIncome(r.Category) && !S.groups.isSaving(r.Category);
+      });
+    } catch (e) { S.pool = []; }
+    renderPool();
+  }
+  function renderPool() {
+    var slot = document.getElementById('poolslot');
+    if (!slot) return;
+    var sc = settleCat();
+    if (!sc) { slot.innerHTML = ''; return; }
+    if (S.pool === null) { ensurePool(); slot.innerHTML = '<div class="soft-note">Loading…</div>'; return; }
+
+    var n = Object.keys(S.picks).length;
+    var head = '<button class="field" id="poolhead" style="margin-bottom:' +
+      (S.poolOpen ? '0' : '8px') + '"><div class="grow"><span class="lab">' + sc.label + '</span>' +
+      '<span class="v">' + (n ? n + ' item' + (n === 1 ? '' : 's') + ' · ' +
+        window.Mock.fmtBaht(picksTotal()) : 'Pick the expenses this settles') + '</span></div>' +
+      '<span class="chev' + (S.poolOpen ? ' open' : '') + '">' + V2.icon('right', 'sm') + '</span></button>';
+
+    var body = '';
+    if (S.poolOpen) {
+      body = '<div class="card" style="margin-bottom:8px">' +
+        (S.pool.length ? S.pool.map(function (r) {
+          var picked = S.picks[r.RefID] != null;
+          return '<div class="sharerow">' +
+            '<span class="tick' + (picked ? ' on' : '') + '" data-pool="' + esc(r.RefID) + '">' +
+              (picked ? V2.icon('check', 'sm') : '') + '</span>' +
+            '<div class="grow"><div class="trunc" style="font-weight:650">' +
+              esc(r.Description || r.RefID) + '</div>' +
+            '<div class="faint">' + esc(V2.shortDay(r.Date)) + ' · ' +
+              window.Mock.fmtBaht(r.Amount) + '</div></div>' +
+            (picked ? '<input class="inp" data-share="' + esc(r.RefID) + '" ' +
+              'style="width:96px;min-height:40px;padding:8px 10px;text-align:right" ' +
+              'type="number" step="0.01" value="' + esc(S.picks[r.RefID]) + '" ' +
+              'aria-label="Share for ' + esc(r.Description || r.RefID) + '">' : '') +
+          '</div>';
+        }).join('') : '<div class="soft-note">Nothing unsettled right now.</div>') +
+        (n ? '<div class="row" style="justify-content:space-between;margin-top:10px;' +
+             'padding-top:10px;border-top:1px solid var(--border);font-size:13px">' +
+             '<span class="faint">' + n + ' selected</span><b>' +
+             window.Mock.fmtBaht(picksTotal()) + '</b></div>' : '') +
+        '</div>';
+    }
+    slot.innerHTML = head + body;
+
+    document.getElementById('poolhead').addEventListener('click', function () {
+      S.poolOpen = !S.poolOpen; renderPool();
+    });
+    slot.querySelectorAll('[data-pool]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var ref = el.dataset.pool;
+        if (S.picks[ref] != null) delete S.picks[ref];
+        else {
+          var row = S.pool.filter(function (r) { return r.RefID === ref; })[0];
+          S.picks[ref] = Number(row.Amount) || 0;   // default: the full amount
+        }
+        renderPool();
+      });
+    });
+    slot.querySelectorAll('[data-share]').forEach(function (el) {
+      el.addEventListener('input', function () {
+        S.picks[el.dataset.share] = this.value;
+      });
+    });
+  }
+
+  // ---- save ---------------------------------------------------------------
+  function renderSave() {
+    var b = document.getElementById('save');
+    b.innerHTML = V2.icon('check', 'sm') + ' Save entry';
+    b.disabled = !(amountNum() > 0);
+  }
+
+  document.getElementById('save').addEventListener('click', async function () {
+    var btn = this;
+    if (!(amountNum() > 0)) { V2.toast('Enter an amount first'); return; }
+    if (!S.desc.trim()) {
+      S.open = true; renderDetails();
+      V2.toast('Add a description');
+      var f = document.getElementById('f-desc'); if (f) f.focus();
+      return;
+    }
+    var sc = settleCat();
+    var picks = sc ? Object.keys(S.picks).map(function (ref) {
+      return { RefID: ref, roong_share: parseFloat(S.picks[ref]) || 0 };
+    }) : [];
+
+    // Warn, don't block, when the picks don't add up — same rule as today.
+    if (picks.length) {
+      var total = picks.reduce(function (t, p) { return t + p.roong_share; }, 0);
+      var diff = total - amountNum();
+      if (Math.abs(diff) >= 0.005 && !confirm(
+          'The ' + picks.length + ' selected item' + (picks.length === 1 ? '' : 's') +
+          ' total ' + window.Mock.fmtBaht(total) + ', which is ' +
+          window.Mock.fmtBaht(Math.abs(diff)) + ' ' + (diff < 0 ? 'less' : 'more') +
+          ' than this ' + sc.noun + ' of ' + window.Mock.fmtBaht(amountNum()) +
+          '.\n\nSave anyway?')) return;
+    }
+
+    var payload = {
+      Date:        S.date,
+      Description: S.desc.trim(),
+      Amount:      String(amountNum()),
+      Category:    S.cat,
+      Card:        S.card,
+      Note:        S.note.trim(),
+      Settle:      S.settle ? 'True' : ''
+    };
+    if (picks.length) payload.Reimburses = picks;
+
+    btn.disabled = true;
+    V2.busy('Saving…');
+    try {
+      var data = await DataSource.submitEntry(payload);
+      var row = (data && data.row) || {};
+      var warn = data && data.settlement_error;
+      S.amt = ''; S.desc = ''; S.note = ''; S.cat = ''; S.card = '';
+      S.settle = false; S.settleTouched = false; S.picks = {}; S.poolOpen = false;
+      S.pool = null;
+      renderAll();
+      V2.toast(warn
+        ? 'Row saved, but the settlement leg failed: ' + warn
+        : 'Saved · ' + window.Mock.fmtBaht(row.Amount || payload.Amount) + ' · ' +
+          (row.RefID || 'manual'));
+    } catch (e) {
+      btn.disabled = false;
+      V2.toast('Could not save: ' + e.message);
+    }
+  });
+
+  function renderAll() {
+    renderAmount(); renderFreq(); renderCat(); renderDetails(); renderSave();
+  }
+
+  (async function () {
+    V2.wireTopbar();
+    renderAmount(); renderSave();
+    try {
+      var r = await Promise.all([
+        DataSource.loadDatabase(),
+        DataSource.loadConfig().catch(function () { return null; })
+      ]);
+      S.rows = r[0]; S.cfg = r[1];
+      S.groups = V2.catGroups(S.cfg);
+      S.freq = V2.frequents(S.rows, S.cfg);
+      renderAll();
+      V2.nav('entry', {});
+    } catch (e) {
+      document.getElementById('catslot').innerHTML =
+        '<div class="err">Could not load categories: ' + esc(e.message) + '</div>';
+      V2.nav('entry', {});
+    }
+  })();
+})();
+</script>
+</body>
+</html>

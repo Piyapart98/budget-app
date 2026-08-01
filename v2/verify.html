@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>Card statement check — Budget</title>
+<link rel="stylesheet" href="v2.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="backb" href="index.html">&#8249; Home</a>
+    <span class="ttl">Card statement check</span>
+    <span style="width:64px"></span>
+  </div>
+
+  <div id="body"><div class="soft-note">Loading…</div></div>
+
+  <a class="livelink" href="../statement_verify.html"><u>Open the current Verify statements page</u></a>
+</div>
+
+<script src="../warm-shared.js"></script>
+<script src="../data-source.js"></script>
+<script src="v2-shared.js"></script>
+<script>
+(function () {
+  'use strict';
+  var esc = V2.esc;
+
+  var S = { snap: null, cfg: null, groups: null, open: null, staged: {} };
+
+  function cards() { return (S.snap && S.snap.cards) || []; }
+
+  function cardChip(c) {
+    var s = c.summary || {};
+    var missing = s.missing_in_db || 0;
+    var notOn = s.not_on_statement || 0;
+    if (!missing && !notOn) return '<span class="chip ok">' + V2.icon('shield', 'sm') + ' verified</span>';
+    if (missing) return '<span class="chip warn">' + missing + ' missing</span>';
+    return '<span class="chip info">' + notOn + ' not on statement</span>';
+  }
+
+  function money(n) { return window.Mock.fmtBaht(n); }
+
+  function stagedFor(last4) { return S.staged[last4] || {}; }
+  function stagedCount(last4) { return Object.keys(stagedFor(last4)).length; }
+
+  function renderCard(c) {
+    var last4 = c.card_last4;
+    var s = c.summary || {};
+    var isOpen = S.open === last4;
+    var missing = c.missing_in_db || [];
+    var notOn = c.not_on_statement || [];
+    var st = stagedFor(last4);
+
+    var head =
+      '<button class="catrow hd" data-open="' + esc(last4) + '" ' +
+        'style="width:100%;background:var(--surface);border:1px solid var(--border);' +
+        'border-radius:var(--r-m);padding:12px 13px;margin-bottom:7px;text-align:left;cursor:pointer">' +
+        '<span class="row"><span class="em" style="font-size:17px">💳</span>' +
+        '<span class="grow" style="font-weight:650">' + esc(c.issuer || last4) +
+          ' · ' + esc(last4) + '</span>' + cardChip(c) +
+        '<span class="chev' + (isOpen ? ' open' : '') + '">' + V2.icon('right', 'sm') + '</span></span>' +
+        '<span class="faint" style="display:block;margin-top:5px">' +
+          esc(String(c.period_start || '').slice(5)) + ' → ' +
+          esc(String(c.period_end || '').slice(5)) + ' · ' +
+          (s.matched || 0) + ' of ' + ((s.matched || 0) + (s.missing_in_db || 0)) +
+          ' statement rows matched' +
+          (c.statement_total != null ? ' · closing ' + money(c.statement_total) : '') +
+        '</span></button>';
+
+    if (!isOpen) return head;
+
+    var body = '<div class="card" style="margin:-2px 0 10px">';
+
+    if (missing.length) {
+      body += '<div class="eyebrow">On the statement, not in your ledger</div>' +
+        '<p class="faint" style="margin:4px 0 10px">Decide each one, then commit them together.</p>' +
+        missing.map(function (tx, i) {
+          var k = String(i);
+          var state = st[k];
+          return '<div class="sharerow">' +
+            '<div class="grow"><div class="trunc" style="font-weight:650">' +
+              esc(tx.merchant || tx.description || '(no merchant)') + '</div>' +
+            '<div class="faint">' + esc(V2.shortDay(tx.date)) + ' · ' + money(tx.amount) +
+              (tx.predicted_category
+                ? ' · would file as ' + window.Mock.catEmoji(tx.predicted_category) + ' ' +
+                  esc(tx.predicted_category)
+                : ' · no category predicted') + '</div>' +
+            (state === 'add' ? '<div class="meta"><span class="chip ok">staged to add</span></div>'
+             : state === 'skip' ? '<div class="meta"><span class="chip plain">skipped</span></div>' : '') +
+            '</div>' +
+            '<div class="row" style="gap:6px">' +
+              '<button class="chip tap ' + (state === 'add' ? 'on' : 'plain') +
+                '" data-stage="' + esc(last4) + ':' + k + ':add">' + V2.icon('plus', 'sm') + ' Add</button>' +
+              '<button class="chip tap ' + (state === 'skip' ? 'on' : 'plain') +
+                '" data-stage="' + esc(last4) + ':' + k + ':skip">Skip</button>' +
+            '</div></div>';
+        }).join('') +
+        '<button class="btn btn-green" style="margin-top:12px" data-commit="' + esc(last4) + '"' +
+          (stagedCount(last4) ? '' : ' disabled') + '>' + V2.icon('check', 'sm') +
+          ' Commit ' + stagedCount(last4) + ' decision' +
+          (stagedCount(last4) === 1 ? '' : 's') + '</button>';
+    } else {
+      body += '<div class="row" style="gap:8px;color:var(--green)">' + V2.icon('checkc', 'sm') +
+        '<span style="font-size:14px">Every statement row has a matching ledger row.</span></div>';
+    }
+
+    if (notOn.length) {
+      body += '<div class="hr"></div><div class="eyebrow">In your ledger, not on this statement</div>' +
+        '<p class="faint" style="margin:4px 0 8px">Usually timing — a charge that lands after the ' +
+        'period closes. Nothing to do unless one looks wrong.</p>' +
+        notOn.slice(0, 12).map(function (r) {
+          return '<button class="entryrow" data-edit="' + esc(r.RefID) + '">' +
+            '<span class="em">' + window.Mock.catEmoji(r.Category) + '</span>' +
+            '<span class="grow"><span style="font-weight:600;display:block" class="trunc">' +
+              esc(r.Description || r.RefID) + '</span>' +
+            '<span class="faint">' + esc(V2.shortDay(r.Date)) + ' · ' + esc(r.Category || '') +
+            '</span></span><span class="amt">' + money(r.Amount) + '</span>' +
+            '<span style="color:var(--text-faint)">' + V2.icon('edit', 'sm') + '</span></button>';
+        }).join('') +
+        (notOn.length > 12 ? '<p class="faint center" style="margin-top:8px">and ' +
+          (notOn.length - 12) + ' more</p>' : '');
+    }
+
+    return head + body + '</div>';
+  }
+
+  function render() {
+    var host = document.getElementById('body');
+    var list = cards();
+    var gen = S.snap && S.snap.generated_at;
+
+    var html = '';
+    if (list.length) {
+      html += '<div class="sect">Cards</div>' + list.map(renderCard).join('');
+    } else {
+      html += '<div class="empty"><span class="em">📄</span>' +
+        '<h3>Nothing to check right now</h3>' +
+        '<p>Upload a card statement PDF and it gets parsed and cross-checked ' +
+        'against your ledger — no Mac needed.</p>' +
+        '<a class="btn btn-green" href="../statement_verify.html">' +
+        V2.icon('doc', 'sm') + ' Upload a statement</a></div>';
+    }
+
+    var errs = (S.snap && S.snap.upload_errors) || [];
+    var dups = (S.snap && S.snap.duplicate_notes) || [];
+    if (errs.length) {
+      html += '<div class="sect">Upload problems</div>' + errs.map(function (e) {
+        return '<div class="err">' + esc(typeof e === 'string' ? e : (e.message || JSON.stringify(e))) + '</div>';
+      }).join('');
+    }
+    if (dups.length) {
+      html += '<div class="sect">Duplicates held back</div>' + dups.map(function (e) {
+        return '<div class="card" style="margin-bottom:8px"><div class="faint">' +
+          esc(typeof e === 'string' ? e : (e.note || JSON.stringify(e))) + '</div></div>';
+      }).join('');
+    }
+
+    if (list.length) {
+      html += '<div class="sect">Another statement</div>' +
+        '<div class="card"><p class="faint" style="margin-bottom:10px">' +
+        'Uploading a PDF (and typing its password) stays on the current page — ' +
+        'it has the file picker and the one-shot password flow.</p>' +
+        '<a class="btn btn-out" href="../statement_verify.html">' + V2.icon('doc', 'sm') +
+        ' Upload a statement</a></div>';
+    }
+
+    html += '<p class="faint center" style="margin-top:14px">' +
+      (gen ? 'Snapshot generated ' + esc(new Date(gen).toLocaleString('en-GB',
+              { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) +
+             '. It reflects the ledger as of that run.'
+           : 'No snapshot has been generated yet.') + '</p>';
+
+    host.innerHTML = html;
+  }
+
+  document.getElementById('body').addEventListener('click', async function (e) {
+    var t = e.target.closest('[data-open],[data-stage],[data-commit],[data-edit]');
+    if (!t) return;
+    var d = t.dataset;
+
+    if (d.open) { S.open = (S.open === d.open) ? null : d.open; render(); return; }
+
+    if (d.stage) {
+      var p = d.stage.split(':');
+      S.staged[p[0]] = S.staged[p[0]] || {};
+      if (S.staged[p[0]][p[1]] === p[2]) delete S.staged[p[0]][p[1]];
+      else S.staged[p[0]][p[1]] = p[2];
+      render(); return;
+    }
+
+    if (d.edit) {
+      var rows = await DataSource.loadDatabase();
+      var row = rows.filter(function (r) { return r.RefID === d.edit; })[0];
+      if (row) V2.editSheet(row, { config: S.cfg, onSaved: function () { V2.toast('Saved'); } });
+      return;
+    }
+
+    if (d.commit) {
+      var last4 = d.commit;
+      var card = cards().filter(function (c) { return c.card_last4 === last4; })[0];
+      var st = stagedFor(last4);
+      var toAdd = Object.keys(st).filter(function (k) { return st[k] === 'add'; });
+      var undecided = (card.missing_in_db || []).length - Object.keys(st).length;
+      if (undecided > 0 && !confirm(undecided + ' row' + (undecided === 1 ? ' is' : 's are') +
+          ' still undecided. Commit the ' + Object.keys(st).length + ' you have decided?')) return;
+
+      V2.busy('Committing…');
+      try {
+        for (var i = 0; i < toAdd.length; i++) {
+          var tx = card.missing_in_db[+toAdd[i]];
+          await DataSource.submitEntry({
+            Date:        tx.date,
+            Description: tx.merchant || tx.description || 'Statement row',
+            Amount:      String(tx.amount),
+            Category:    tx.predicted_category || '',
+            Card:        card.issuer || '',
+            Note:        '',
+            Settle:      ''
+          });
+        }
+        await DataSource.finalizeVerifiedCard(last4);
+        delete S.staged[last4];
+        S.snap = await DataSource.loadVerification();
+        S.open = null;
+        render();
+        V2.toast(toAdd.length + ' row' + (toAdd.length === 1 ? '' : 's') +
+                 ' added · statement archived');
+      } catch (err) {
+        V2.toast('Could not commit: ' + err.message);
+        render();
+      }
+      return;
+    }
+  });
+
+  (async function () {
+    V2.wireTopbar();
+    try {
+      var r = await Promise.all([
+        DataSource.loadVerification().catch(function () { return null; }),
+        DataSource.loadConfig().catch(function () { return null; })
+      ]);
+      S.snap = r[0] || { cards: [], generated_at: null };
+      S.cfg = r[1];
+      S.groups = V2.catGroups(S.cfg);
+      render();
+      V2.nav('verify', {});
+    } catch (e) {
+      // A missing or unreadable snapshot is an EMPTY STATE, not an error —
+      // the live page's raw "Error — No statement PDFs found" is the bug this
+      // page exists to fix.
+      S.snap = { cards: [], generated_at: null };
+      render();
+      V2.nav('verify', {});
+    }
+  })();
+})();
+</script>
+</body>
+</html>

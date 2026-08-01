@@ -827,6 +827,112 @@
     return { ok: true };
   }
 
+  // Editable fields, mirrored from run_pipeline.EDITABLE_FIELDS. Kept as a
+  // client-side guard so a malformed batch fails before any network call —
+  // the server validates the same set and is the authority.
+  var EDITABLE_FIELDS = ['Date', 'Description', 'Amount', 'Category', 'Card',
+                         'Note', 'Settle'];
+
+  /**
+   * Apply many field edits — across one row or many — under a single Reason.
+   *
+   *   payload = { Reason: 'wrong category',
+   *               Edits: [{ RefID: 'p123', Fields: { Category: 'Food', ... } }] }
+   *
+   * Atomic on the server. In GitHub mode the whole batch is two commits
+   * (database.csv, changelog.csv) instead of two per field, which is what makes
+   * a five-field correction survive a flaky cellular connection.
+   *
+   * submitEdit (single field) is untouched and still serves edit_log.html.
+   */
+  async function submitEdits(payload) {
+    var reason = String((payload && payload.Reason) || '').trim();
+    var edits = (payload && payload.Edits) || [];
+    if (!reason) throw new Error('A reason is required.');
+    if (!edits.length) throw new Error('Nothing to save.');
+
+    edits.forEach(function (e) {
+      if (!e || !e.RefID) throw new Error('Each edit needs a RefID.');
+      var fields = e.Fields || {};
+      var names = Object.keys(fields);
+      if (!names.length) throw new Error(e.RefID + ': no fields to change.');
+      names.forEach(function (f) {
+        if (EDITABLE_FIELDS.indexOf(f) === -1) {
+          throw new Error('Field not editable: ' + f);
+        }
+        if (f === 'Amount') assertAmount(fields[f]);
+      });
+    });
+
+    if (MODE === 'local') {
+      var res = await fetch('/api/edit/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Reason: reason, Edits: edits }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || 'Server returned ' + res.status);
+      return data;
+    }
+
+    // GitHub mode: mirror the server's contract — validate everything against
+    // the loaded rows, skip no-op fields, then write once.
+    var ts = nowHuman();
+    var logEntries = [];
+    var touched = {};
+
+    await mutateCsv('database.csv', function (rows) {
+      // mutateCsv re-runs this on a 409 retry with freshly-fetched rows, so
+      // every attempt must start from a clean slate — otherwise a retry would
+      // append the changelog entries twice.
+      logEntries = [];
+      touched = {};
+
+      var byRef = {};
+      for (var i = 0; i < rows.length; i++) byRef[rows[i].RefID] = rows[i];
+
+      var planned = [];
+      edits.forEach(function (e) {
+        var target = byRef[e.RefID];
+        if (!target) throw new Error('Row not found: ' + e.RefID);
+        Object.keys(e.Fields).forEach(function (f) {
+          var val = e.Fields[f];
+          val = (f === 'Settle') ? settleFlag(val)
+                                 : String(val == null ? '' : val).trim();
+          planned.push({ row: target, field: f, oldVal: target[f] || '', newVal: val });
+        });
+      });
+
+      planned.forEach(function (p) {
+        if (p.oldVal === p.newVal) return;          // no-op: no write, no log
+        p.row[p.field] = p.newVal;
+        p.row.Edited = 'Yes';
+        touched[p.row.RefID] = true;
+        logEntries.push({
+          Timestamp: ts,
+          RefID:     p.row.RefID,
+          Action:    'edit',
+          Field:     p.field,
+          OldValue:  p.oldVal,
+          NewValue:  p.newVal,
+          Reason:    reason,
+        });
+      });
+      return rows;
+      // Static message: mutateCsv evaluates it before the mutator runs, so it
+      // cannot describe what the mutator ended up changing.
+    }, 'batch edit from phone', DB_COLUMNS);
+
+    if (!logEntries.length) return { ok: true, rows: 0, fields: 0 };
+
+    var pending = logEntries.slice();      // frozen: the changelog mutator may
+    await mutateCsv('changelog.csv', function (rows) {   // also be retried
+      return rows.concat(pending);
+    }, 'changelog: batch edit', CHANGELOG_COLUMNS);
+
+    return { ok: true, rows: Object.keys(touched).length, fields: logEntries.length };
+  }
+
   async function submitDelete(payload) {
     if (MODE === 'local') {
       var res = await fetch('/api/delete', {
@@ -1889,6 +1995,7 @@
     archiveStatement:    archiveStatement,
     submitEntry:         submitEntry,
     submitEdit:          submitEdit,
+    submitEdits:         submitEdits,
     submitDelete:        submitDelete,
 
     loadRoongUnsettled:  loadRoongUnsettled,
